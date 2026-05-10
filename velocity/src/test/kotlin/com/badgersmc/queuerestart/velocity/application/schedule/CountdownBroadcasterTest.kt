@@ -1,0 +1,164 @@
+package com.badgersmc.queuerestart.velocity.application.schedule
+
+import com.badgersmc.queuerestart.velocity.application.ports.AudiencePort
+import com.badgersmc.queuerestart.velocity.application.ports.SoundCue
+import com.badgersmc.queuerestart.velocity.domain.countdown.CountdownSchedule
+import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+
+/**
+ * REQ-003, REQ-004.
+ *
+ * Drives `CountdownSchedule.fireAt` and dispatches the configured chat
+ * message + sound for every mark including T-0. Idempotent: ticking
+ * the same second twice fires nothing the second time.
+ */
+class CountdownBroadcasterTest {
+
+    private val target = ServerId("survival")
+    private val hub = ServerId("lobby")
+
+    private class RecordingAudience : AudiencePort {
+        data class Broadcast(val server: ServerId, val message: String, val placeholders: Map<String, String>)
+        data class Sound(val server: ServerId, val cue: SoundCue)
+        val broadcasts = mutableListOf<Broadcast>()
+        val sounds = mutableListOf<Sound>()
+        override fun broadcast(target: ServerId, miniMessage: String, placeholders: Map<String, String>) {
+            broadcasts += Broadcast(target, miniMessage, placeholders)
+        }
+        override fun playSound(target: ServerId, cue: SoundCue) {
+            sounds += Sound(target, cue)
+        }
+    }
+
+    private val schedule = CountdownSchedule(listOf(60, 30, 10, 5, 1))
+
+    private val tick = SoundCue("ui.button.click", 0.5f, 1.0f)
+    private val t0Sound = SoundCue("block.beacon.deactivate", 0.5f, 1.0f)
+    private val sounds: (Int) -> SoundCue? = { sec ->
+        when {
+            sec == 0 -> t0Sound
+            sec <= 10 -> tick
+            else -> null
+        }
+    }
+
+    private fun broadcaster(audience: AudiencePort = RecordingAudience()): CountdownBroadcaster =
+        CountdownBroadcaster(
+            audience = audience,
+            messageTemplate = "<gold>Server <yellow><server></yellow> in <yellow><time></yellow>",
+            t0Template = "<red>Sending you to <yellow><hub></yellow>",
+            soundResolver = sounds,
+        )
+
+    @Test
+    fun `mark second fires broadcast and sound`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+        b.register(target, schedule, hub)
+
+        b.tick(target, secondsRemaining = 10)
+
+        assertThat(audience.broadcasts).hasSize(1)
+        val msg = audience.broadcasts[0]
+        assertThat(msg.server).isEqualTo(target)
+        assertThat(msg.placeholders["server"]).isEqualTo("survival")
+        assertThat(msg.placeholders["time"]).isEqualTo("10s")
+        assertThat(audience.sounds).containsExactly(RecordingAudience.Sound(target, tick))
+    }
+
+    @Test
+    fun `non-mark second fires nothing`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+        b.register(target, schedule, hub)
+
+        b.tick(target, secondsRemaining = 11)
+
+        assertThat(audience.broadcasts).isEmpty()
+        assertThat(audience.sounds).isEmpty()
+    }
+
+    @Test
+    fun `T-0 uses t0 template and t0 sound`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+        b.register(target, schedule, hub)
+
+        b.tick(target, secondsRemaining = 0)
+
+        assertThat(audience.broadcasts).hasSize(1)
+        assertThat(audience.broadcasts[0].message).contains("Sending you to")
+        assertThat(audience.broadcasts[0].placeholders["hub"]).isEqualTo("lobby")
+        assertThat(audience.sounds).containsExactly(RecordingAudience.Sound(target, t0Sound))
+    }
+
+    @Test
+    fun `repeated tick at same second is idempotent`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+        b.register(target, schedule, hub)
+
+        b.tick(target, secondsRemaining = 60)
+        b.tick(target, secondsRemaining = 60)
+        b.tick(target, secondsRemaining = 60)
+
+        assertThat(audience.broadcasts).hasSize(1)
+        assertThat(audience.sounds).hasSize(0) // 60s has no mapped sound in this fixture
+    }
+
+    @Test
+    fun `cancel stops further fires`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+        b.register(target, schedule, hub)
+
+        b.cancel(target)
+        b.tick(target, secondsRemaining = 10)
+
+        assertThat(audience.broadcasts).isEmpty()
+    }
+
+    @Test
+    fun `tick for unregistered target is a no-op`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+
+        b.tick(target, secondsRemaining = 10)
+
+        assertThat(audience.broadcasts).isEmpty()
+    }
+
+    @Test
+    fun `multiple targets are tracked independently`() {
+        val audience = RecordingAudience()
+        val b = broadcaster(audience)
+        val creative = ServerId("creative")
+        b.register(target, schedule, hub)
+        b.register(creative, schedule, hub)
+
+        b.tick(target, 10)
+        b.tick(creative, 30)
+
+        assertThat(audience.broadcasts.map { it.server })
+            .containsExactly(target, creative)
+        assertThat(audience.broadcasts.map { it.placeholders["time"] })
+            .containsExactly("10s", "30s")
+    }
+
+    @Test
+    fun `time placeholder formats minutes for marks above 60s`() {
+        val audience = RecordingAudience()
+        val schedWithMinutes = CountdownSchedule(listOf(60, 120, 300))
+        val b = broadcaster(audience)
+        b.register(target, schedWithMinutes, hub)
+
+        b.tick(target, 300)
+        b.tick(target, 120)
+        b.tick(target, 60)
+
+        val times = audience.broadcasts.map { it.placeholders["time"] }
+        assertThat(times).containsExactly("5m", "2m", "1m")
+    }
+}

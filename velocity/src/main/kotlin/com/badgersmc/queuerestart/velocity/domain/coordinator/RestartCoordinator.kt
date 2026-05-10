@@ -1,0 +1,78 @@
+package com.badgersmc.queuerestart.velocity.domain.coordinator
+
+import com.badgersmc.queuerestart.velocity.domain.cohort.Cohort
+import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+
+/** State machine positions per implementation.md §5. */
+enum class RestartState {
+    IDLE,
+    ARMED,
+    COUNTDOWN,
+    DRAINING,
+    RESTART_SENT,
+    SERVER_DOWN,
+    REJOIN_RELEASE,
+}
+
+/**
+ * One per target server. Pure-domain state machine — drives no side effects
+ * itself. The application layer feeds it events (`arm`, `beginCountdown`,
+ * `beginDrain`, `restartSent`, `serverDown`, `serverUp`, `releaseComplete`,
+ * `cancel`) sourced from clock ticks, plugin messages, and operator input.
+ *
+ * REQ-001, REQ-002, REQ-005, REQ-061. Illegal transitions throw
+ * [IllegalStateException]; cancel is legal only in [RestartState.ARMED] and
+ * [RestartState.COUNTDOWN]; double-arm is rejected.
+ */
+class RestartCoordinator(val serverId: ServerId) {
+
+    var state: RestartState = RestartState.IDLE
+        private set
+
+    var cohort: Cohort? = null
+        private set
+
+    var durationSeconds: Int = 0
+        private set
+
+    fun arm(cohort: Cohort, durationSeconds: Int) {
+        require(durationSeconds >= 0) { "durationSeconds must be ≥ 0" }
+        check(state == RestartState.IDLE) {
+            "Cannot arm — coordinator for ${serverId.value} is in $state (REQ-061)"
+        }
+        this.cohort = cohort
+        this.durationSeconds = durationSeconds
+        state = RestartState.ARMED
+    }
+
+    fun beginCountdown() = transition(from = RestartState.ARMED, to = RestartState.COUNTDOWN)
+
+    fun beginDrain() = transition(from = RestartState.COUNTDOWN, to = RestartState.DRAINING)
+
+    fun restartSent() = transition(from = RestartState.DRAINING, to = RestartState.RESTART_SENT)
+
+    fun serverDown() = transition(from = RestartState.RESTART_SENT, to = RestartState.SERVER_DOWN)
+
+    fun serverUp() = transition(from = RestartState.SERVER_DOWN, to = RestartState.REJOIN_RELEASE)
+
+    fun releaseComplete() {
+        transition(from = RestartState.REJOIN_RELEASE, to = RestartState.IDLE)
+        cohort = null
+        durationSeconds = 0
+    }
+
+    /** REQ-005. Legal only in ARMED, COUNTDOWN. */
+    fun cancel() {
+        check(state == RestartState.ARMED || state == RestartState.COUNTDOWN) {
+            "Cannot cancel from $state — only ARMED or COUNTDOWN may be cancelled"
+        }
+        state = RestartState.IDLE
+        cohort = null
+        durationSeconds = 0
+    }
+
+    private fun transition(from: RestartState, to: RestartState) {
+        check(state == from) { "Illegal transition: expected $from, was $state (target $to)" }
+        state = to
+    }
+}

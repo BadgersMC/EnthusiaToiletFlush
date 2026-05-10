@@ -1,0 +1,9 @@
+{
+  "id": "queue-restart",
+  "name": "queue-restart",
+  "version": "0.1.0-SNAPSHOT",
+  "description": "Graceful scheduled restarts with drain + rejoin queue.",
+  "authors": ["BadgersMC"],
+  "dependencies": [],
+  "main": "com.badgersmc.queuerestart.velocity.QueueRestartPlugin"
+}

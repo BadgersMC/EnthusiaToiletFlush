@@ -1,0 +1,52 @@
+hub-server: lobby
+fallback-hubs: [lobby2, lobby3]
+
+drain:
+  batch-size: 10
+  batch-interval-ticks: 40
+  drain-lead-seconds: 30
+  force-drain-timeout-seconds: 120
+  drain-order: priority-asc        # asc=low rank leaves first
+
+rejoin:
+  enabled: true
+  enqueue-on-server-up: true
+  release-on-checkhacks-cleared: true
+  check-gate-timeout-seconds: 60
+  release-on-timeout: true
+  ping-poll-seconds: 3
+
+rank-ladder:
+  group.owner: 1000
+  group.admin: 900
+  group.mvp+:  500
+  group.mvp:   300
+  group.vip+:  150
+  group.vip:   100
+  default:     0
+
+countdown:
+  marks-seconds: [1200, 600, 300, 120, 60, 30, 10, 5, 4, 3, 2, 1]
+  message:    "<gold>Server <yellow><server></yellow> restarts in <yellow><time></yellow></gold>"
+  message-t0: "<red>Sending you to <yellow><hub></yellow> for restart...</red>"
+  cancel-message: "<green>Restart of <yellow><server></yellow> cancelled.</green>"
+
+sounds:
+  20m:  { key: block.note_block.bell,    volume: 0.4, pitch: 1.0 }
+  10m:  { key: block.note_block.bell,    volume: 0.4, pitch: 1.0 }
+  5m:   { key: block.note_block.chime,   volume: 0.5, pitch: 1.0 }
+  2m:   { key: block.note_block.chime,   volume: 0.5, pitch: 1.0 }
+  1m:   { key: block.note_block.pling,   volume: 0.6, pitch: 1.2 }
+  30s:  { key: block.note_block.pling,   volume: 0.6, pitch: 1.2 }
+  tick: { key: ui.button.click,          volume: 0.7, pitch: 1.0 }   # 10..1s
+  t0:   { key: block.beacon.deactivate,  volume: 0.6, pitch: 1.0 }
+
+schedules:
+  survival-nightly:
+    server: survival
+    cron: "0 4 * * *"
+    warn-minutes: 20
+  creative-weekly:
+    server: creative
+    cron: "0 5 * * 1"
+    warn-minutes: 15

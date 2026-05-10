@@ -1,0 +1,31 @@
+# queue-restart-companion config
+#
+# Each backend Paper JVM owns its own restart clock. The proxy's
+# queue-restart plugin should mirror these times in its own schedules
+# block so the countdown + drain on the proxy line up with the actual
+# Bukkit.shutdown() that fires here.
+#
+# restart-times: list of daily HH:mm strings, 24-hour, in [time-zone].
+# The companion re-arms each entry after firing, so the schedule loops
+# forever without external nudging.
+
+restart-times: []
+time-zone: "America/New_York"
+
+# How long before a scheduled restart the proxy should start its
+# countdown / drain choreography. Advertised to the proxy via the SLP
+# discovery channel — proxy uses this to start broadcasting warnings.
+warn-minutes: 30
+
+# Inverse-SLP poll: companion identifies itself to the proxy via a magic
+# handshake hostname (`QR_POLL:<server-id>`) and pulls any pending arm
+# the proxy has stored. Closes the "console-armed restart with no
+# players on target" gap. Set proxy-host to whatever address the
+# companion can reach the proxy on (often "127.0.0.1" or the panel's
+# proxy LAN address).
+proxy-host: "127.0.0.1"
+proxy-port: 25565
+# Must match the name configured in the proxy's `[servers]` table —
+# this is how the proxy looks up which backend the poll is for.
+server-id: "lobby2"
+arm-poll-seconds: 5

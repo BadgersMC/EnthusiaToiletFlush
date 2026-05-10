@@ -1,0 +1,7 @@
+name: EnthusiaToiletFlush
+main: com.badgersmc.queuerestart.paper.CompanionPlugin
+version: 0.1.0-SNAPSHOT
+api-version: '1.21'
+authors: [BadgersMC]
+description: Paper backend companion for the EnthusiaToiletFlush proxy plugin (graceful scheduled restarts with drain + rejoin queue).
+softdepend: [CheckHacks]
