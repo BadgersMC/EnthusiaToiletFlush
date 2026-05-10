@@ -33,7 +33,17 @@ class VelocityChannelTransport(
     @Subscribe
     fun onPluginMessage(event: PluginMessageEvent) {
         if (event.identifier != channelIdentifier) return
-        val source = event.source as? ServerConnection ?: return
+        // SECURITY (REQ-090): any message arriving on qrestart:v1 from a
+        // non-backend source (a Minecraft client) is dropped, not
+        // forwarded. Without this, a malicious client could craft a
+        // RestartNow(COMMAND, "op attacker") frame, Velocity would
+        // forward it to the backend, the companion would execute. RCE
+        // by any joined player.
+        val source = event.source as? ServerConnection
+        if (source == null) {
+            event.result = PluginMessageEvent.ForwardResult.handled()
+            return
+        }
         val serverId = ServerId(source.serverInfo.name)
         adapter.handleInbound(serverId, event.data)
         event.result = PluginMessageEvent.ForwardResult.handled()

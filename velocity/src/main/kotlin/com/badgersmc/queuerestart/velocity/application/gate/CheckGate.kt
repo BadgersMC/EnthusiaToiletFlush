@@ -2,6 +2,7 @@ package com.badgersmc.queuerestart.velocity.application.gate
 
 import com.badgersmc.queuerestart.common.protocol.CheckOutcome
 import com.badgersmc.queuerestart.velocity.domain.id.PlayerId
+import java.util.concurrent.ConcurrentHashMap
 
 /** Result of a gate decision for one player. */
 enum class GateOutcome {
@@ -35,7 +36,9 @@ class CheckGate(
 
     private data class PendingEntry(val deadlineSeconds: Long)
 
-    private val pending = mutableMapOf<PlayerId, PendingEntry>()
+    // Touched from the proxy tick (timeouts), the messaging callback
+    // (CheckHacksResult), and the rejoin path (register at server-up).
+    private val pending = ConcurrentHashMap<PlayerId, PendingEntry>()
 
     /** Add [playerId] to the gate. Bypass holders are released immediately. */
     fun register(playerId: PlayerId, hasBypass: Boolean, nowSeconds: Long): GateOutcome {
@@ -69,5 +72,5 @@ class CheckGate(
         return expired.map { it.key to outcome }
     }
 
-    fun isPending(playerId: PlayerId): Boolean = playerId in pending
+    fun isPending(playerId: PlayerId): Boolean = pending.containsKey(playerId)
 }

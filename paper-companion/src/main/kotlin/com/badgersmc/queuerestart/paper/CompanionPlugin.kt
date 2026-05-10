@@ -106,8 +106,12 @@ class CompanionPlugin : JavaPlugin() {
         // Always announce the schedule via SLP, even when empty — proxy
         // distinguishes "no times" (no scheduled restart) from "no announce"
         // (cold-start cache miss) by the presence of the marker entry.
+        val peerFilter = when (config.getString("schedule-announce-peers")?.lowercase()) {
+            "all" -> SchedulePingListener.PeerFilter.ALL
+            else -> SchedulePingListener.PeerFilter.PRIVATE_ONLY
+        }
         server.pluginManager.registerEvents(
-            SchedulePingListener(BackendSchedule(times, zone, warnMinutes)),
+            SchedulePingListener(BackendSchedule(times, zone, warnMinutes), peerFilter),
             this,
         )
 

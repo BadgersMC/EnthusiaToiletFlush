@@ -35,7 +35,9 @@ class CronUtilsScheduler : SchedulerPort {
         var lastFiredAt: ZonedDateTime?,
     )
 
-    private val registrations = mutableListOf<Registration>()
+    // /qrestart reload mutates this from a command thread while tick()
+    // iterates it on the proxy tick thread.
+    private val registrations = java.util.concurrent.CopyOnWriteArrayList<Registration>()
 
     override fun schedule(def: ScheduleDefinition, onFire: (ScheduleDefinition) -> Unit) {
         val cron = try {

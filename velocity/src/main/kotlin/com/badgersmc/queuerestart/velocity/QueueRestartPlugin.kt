@@ -135,11 +135,11 @@ class QueueRestartPlugin @Inject constructor(
         )
         val drainPlanner = DrainPlanner()
         val hubResolver = HubResolver(proxyPort)
-        val rejoinService = RejoinService(proxyPort, queuePort, rankLadder)
         val checkGate = CheckGate(
             timeoutSeconds = cfgSnapshot().rejoin.checkGateTimeoutSeconds,
             releaseOnTimeout = cfgSnapshot().rejoin.releaseOnTimeout,
         )
+        val rejoinService = RejoinService(proxyPort, queuePort, rankLadder, checkGate)
 
         // REQ-022. Pending arms published here are pulled by the
         // companion's ProxyArmPoller via the ProxyPingArmResponder below.
@@ -191,7 +191,17 @@ class QueueRestartPlugin @Inject constructor(
         BackendScheduleSync(scheduleCache, scheduleService).start()
         val scheduleDiscoveryPoller = ScheduleDiscoveryPoller(proxyPort, scheduleCache)
 
-        val adminHandler = QRestartAdminCommandHandler(config, scheduleService, schedRestartHandler)
+        val adminHandler = QRestartAdminCommandHandler(
+            config = config,
+            scheduleService = scheduleService,
+            schedRestartHandler = schedRestartHandler,
+            onReload = {
+                // REQ-090 (#6). Refresh the permission probe set so the
+                // rank-ladder additions in the freshly parsed config
+                // become resolvable via permissionsOf.
+                VelocityProxyServerBackend.withRankLadder(cfgSnapshot().rankLadder.keys)
+            },
+        )
 
         // ── commands ─────────────────────────────────────────────────────
         registerCommand(SchedRestartCommand.LITERAL, SchedRestartCommand(schedRestartHandler).build())
@@ -205,6 +215,7 @@ class QueueRestartPlugin @Inject constructor(
                 orchestrator.tick(now)
                 pingPoller.tick(now)
                 scheduleDiscoveryPoller.tick(now)
+                rejoinService.tick(now.epochSecond)
             } catch (t: Throwable) {
                 logger.warn("queue-restart tick error", t)
             }

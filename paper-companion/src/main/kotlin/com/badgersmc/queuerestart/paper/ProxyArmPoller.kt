@@ -1,5 +1,6 @@
 package com.badgersmc.queuerestart.paper
 
+import com.badgersmc.queuerestart.common.protocol.RestartMode
 import com.badgersmc.queuerestart.common.schedule.ArmEncoding
 import com.badgersmc.queuerestart.common.schedule.ProxyPollHandshake
 import org.bukkit.plugin.Plugin
@@ -77,6 +78,20 @@ class ProxyArmPoller(
 
             val arm = ArmEncoding.decode(encoded) ?: run {
                 plugin.logger.warning("queue-restart: ignoring undecodable arm payload from proxy: $encoded")
+                return
+            }
+            // SECURITY (REQ-090, findings #8 + D): the SLP poll-back path
+            // is unauthenticated until the HMAC work lands in Phase 2.
+            // Until then, restrict to SHUTDOWN so a misconfigured
+            // proxy-host or attacker who answers our poll port cannot
+            // hand us a COMMAND mode that executes via console
+            // (op-self, ban-everyone, etc.) or a non-zero EXIT_CODE that
+            // a supervisor interprets specially.
+            if (arm.mode != RestartMode.SHUTDOWN) {
+                plugin.logger.warning(
+                    "queue-restart: REJECTED non-SHUTDOWN arm via SLP poll-back (mode=${arm.mode}); " +
+                            "only SHUTDOWN is accepted on this path. Enable plugin-message channel for trusted modes."
+                )
                 return
             }
             plugin.logger.info(

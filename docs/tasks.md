@@ -284,6 +284,97 @@ poll response.
   References: REQ-022
   Evidence: `velocity/.../QueueRestartPlugin.kt` (PendingArmStore wired into orchestrator + responder registered); `paper-companion/.../CompanionPlugin.kt` (`startArmPoller` reads config keys, skips if `server-id` empty, starts on enable, stops on disable). End-to-end on test_net 2026-05-09 21:12: console-armed `/schedrestart 1 lobby2` with 0 players on target → SLP-poll round-trip in <1s → companion scheduled shutdown.
 
+## Phase 9.7 — security hardening (REQ-090, peer-audit response)
+
+- [x] T-120 [INFRA] Drop client-origin frames on `qrestart:v1`. Patch
+  `VelocityChannelTransport.onPluginMessage` so non-`ServerConnection`
+  sources are `handled()` and not forwarded. Closes finding #1
+  (any-player → console-OP RCE via `RestartNow(COMMAND, "op self")`).
+  References: REQ-090
+  Evidence: `VelocityChannelTransport.kt:36-50`. Client-origin frames
+  now short-circuit and never reach the companion. Verified by hand
+  using a modded client; the backend log shows no `RestartNow received`
+  for crafted frames.
+
+- [x] T-121 [INFRA] Actually enforce the CheckGate on rejoin. Rewire
+  `RestartOrchestrator.start` to feed verdicts into
+  `RejoinService.onCheckHacksResult`; `enqueueRejoin` registers each
+  cohort member in the gate, releases bypass-perm holders, holds the
+  rest until CLEAN / PROTECTED / timeout, drops on DETECTED. Hook
+  `RejoinService.tick` into the proxy 1Hz loop for timeout sweeps.
+  Closes finding #3 (anti-cheat bypass — gate was dead code).
+  References: REQ-040, REQ-041, REQ-042, REQ-043, REQ-090
+  Evidence: `RejoinService.kt`. Six new tests cover bypass enqueue,
+  pending hold, CLEAN release, DETECTED drop, cross-backend spoof
+  drop, gate-timeout sweep.
+
+- [x] T-122 [INFRA] Replace `mutableMapOf`/`mutableListOf` with
+  `ConcurrentHashMap` / `CopyOnWriteArrayList` on every shared
+  collection: `PendingArmStore.slots`, `CheckGate.pending`,
+  `CoordinatorRegistry.byServer`, `PluginMessageAdapter` handler
+  lists, `CronUtilsScheduler.registrations`. `PendingArmStore.consume`
+  uses atomic remove so two concurrent pollers can't both fire the
+  same arm. Closes findings #4, #5.
+  References: REQ-090
+  Evidence: see imports + comments in those files.
+
+- [x] T-123 [INFRA] Refresh `VelocityProxyServerBackend.withRankLadder`
+  on `/qrestart reload`. `QRestartAdminCommandHandler` gains an
+  `onReload` callback; entrypoint passes a lambda that re-derives the
+  probe set from the just-reloaded config. Closes finding #6.
+  References: REQ-050, REQ-090
+  Evidence: `QRestartAdminCommandHandler.reload`,
+  `QueueRestartPlugin.kt` admin handler wiring.
+
+- [x] T-124 [INFRA] Source-bind CheckHacks verdicts. `MessagingPort.onCheckHacksResult`
+  handler now receives `(ServerId source, PlayerId, CheckOutcome)`;
+  `RejoinService.onCheckHacksResult` drops verdicts unless the player
+  is currently on the source backend. Closes finding B (cross-backend
+  anti-cheat spoof).
+  References: REQ-090
+  Evidence: see `PluginMessageAdapter.handleInbound`,
+  `RejoinService.onCheckHacksResult`, regression test in
+  `RejoinServiceTest` ('cross-backend spoofed verdict is ignored').
+
+- [x] T-125 [INFRA] `SchedulePingListener` defaults to loopback/RFC1918/
+  link-local peers only. Config knob `schedule-announce-peers: all`
+  reverts to old behaviour for WAN-spanning deployments. Closes
+  finding C (schedule cadence reconnaissance via exposed backend SLP).
+  References: REQ-090
+  Evidence: `SchedulePingListener.kt` `PeerFilter`,
+  `paper-companion/config.yml` knob, wired in `CompanionPlugin.startRestartTimer`.
+
+- [x] T-126 [INFRA] `ProxyArmPoller` rejects non-`SHUTDOWN` arm modes.
+  Until phase-2 HMAC lands, the SLP poll-back path is unauthenticated
+  and must not accept `COMMAND`/`EXIT_CODE` — those run via console
+  and could be hijacked by whoever answers the configured proxy port.
+  Closes findings #8, D.
+  References: REQ-022, REQ-090
+  Evidence: `ProxyArmPoller.pollOnce` mode-whitelist check + WARNING
+  log on rejection.
+
+- [x] T-127 [INFRA] `ProxyPollHandshake.parseHostname` caps server-id
+  at 64 chars, restricts to `[A-Za-z0-9_.-]`, and fixes the duplicated
+  space char in the legacy split set. Closes findings I, #10.
+  References: REQ-022, REQ-090
+  Evidence: `ProxyPollHandshake.kt` + existing tests still green
+  (suffix-trim + parse-empty cases).
+
+- [x] T-128 [INFRA] `/schedrestart` rejection text rendered as plain
+  `Component.text`, not via MiniMessage, so embedded `<click>` tags
+  in reasons aren't interpreted. Closes finding #9.
+  References: REQ-090
+  Evidence: `SchedRestartCommand.renderResult` Rejected branch.
+
+- [ ] T-130 [DESIGN] Phase 2 — shared-secret + HMAC across both
+  channels. Closes findings A, B (deep), E, G via cryptographic
+  source authentication + replay protection on every frame /
+  SLP-poll response. Design doc + implementation; expected
+  ~3-5 days of work. Operator workflow: generate secret on proxy
+  install, distribute to every companion. Backwards-compat shim
+  during rollout (signed-or-fallback for one release).
+  References: REQ-090
+
 ## Phase 10 — release verification
 
 - [ ] T-100 [INFRA] Build both shadow jars, deploy to a local dev proxy

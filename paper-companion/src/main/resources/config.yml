@@ -17,6 +17,16 @@ time-zone: "America/New_York"
 # discovery channel — proxy uses this to start broadcasting warnings.
 warn-minutes: 30
 
+# SECURITY (REQ-090, finding C). The schedule is published as a synthetic
+# Server-List-Ping sample entry. Anyone who can reach this backend's
+# Minecraft port and sends a status ping will see restart times + zone
+# + warn-minutes. Default: only loopback / private (RFC1918) / link-local
+# peers get the announcement — covers proxy-on-LAN deployments without
+# leaking schedule to the public internet. Set to `all` to restore
+# pre-patch behavior at your own risk (e.g. if a remote proxy needs to
+# poll over WAN).
+schedule-announce-peers: "private"
+
 # Inverse-SLP poll: companion identifies itself to the proxy via a magic
 # handshake hostname (`QR_POLL:<server-id>`) and pulls any pending arm
 # the proxy has stored. Closes the "console-armed restart with no

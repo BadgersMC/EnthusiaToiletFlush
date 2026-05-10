@@ -61,14 +61,14 @@ class RestartOrchestratorTest {
         data class RestartCall(val server: ServerId, val mode: RestartMode, val arg: String, val delaySeconds: Int)
         val drainSent = mutableListOf<ServerId>()
         val restartSent = mutableListOf<RestartCall>()
-        var checkResultHandler: ((PlayerId, CheckOutcome) -> Unit)? = null
+        var checkResultHandler: ((ServerId, PlayerId, CheckOutcome) -> Unit)? = null
         var drainAckHandler: ((ServerId, Int) -> Unit)? = null
         override fun sendDrainRequest(target: ServerId) { drainSent += target }
         override fun sendRestartNow(target: ServerId, mode: RestartMode, argument: String, delaySeconds: Int) {
             restartSent += RestartCall(target, mode, argument, delaySeconds)
         }
         override fun onDrainAck(handler: (ServerId, Int) -> Unit) { drainAckHandler = handler }
-        override fun onCheckHacksResult(handler: (PlayerId, CheckOutcome) -> Unit) {
+        override fun onCheckHacksResult(handler: (ServerId, PlayerId, CheckOutcome) -> Unit) {
             checkResultHandler = handler
         }
     }
@@ -118,7 +118,7 @@ class RestartOrchestratorTest {
             soundResolver = { null },
         )
         val gate = CheckGate(timeoutSeconds = 60, releaseOnTimeout = true)
-        val rejoin = RejoinService(proxy, FakeQueue(), RankLadder(emptyMap(), 0))
+        val rejoin = RejoinService(proxy, FakeQueue(), RankLadder(emptyMap(), 0), gate)
         val orch = RestartOrchestrator(
             registry = registry,
             proxy = proxy,
@@ -322,14 +322,18 @@ class RestartOrchestratorTest {
     }
 
     @Test
-    fun `start subscribes onCheckHacksResult to feed gate (REQ-040)`() {
+    fun `start subscribes onCheckHacksResult so verdicts reach the gate (REQ-040)`() {
         val (_, b) = setup()
-        // gate is initially empty — register a player so onResult has something to act on
         b.gate.register(pid("alice"), hasBypass = false, nowSeconds = 0)
         assertThat(b.gate.isPending(pid("alice"))).isTrue()
 
-        // simulate inbound CheckHacksResult
-        b.messaging.checkResultHandler!!.invoke(pid("alice"), CheckOutcome.CLEAN)
+        // The orchestrator now forwards inbound verdicts to RejoinService,
+        // which guards on the player actually being on the source backend
+        // (REQ-090 finding B). The fake proxy has no players on survival,
+        // so the source-bound verdict is dropped before reaching the
+        // gate — re-bind alice into the FakeProxy's roster first.
+        b.proxy.playersOnTarget.add(pid("alice"))
+        b.messaging.checkResultHandler!!.invoke(survival, pid("alice"), CheckOutcome.CLEAN)
 
         assertThat(b.gate.isPending(pid("alice"))).isFalse()
     }

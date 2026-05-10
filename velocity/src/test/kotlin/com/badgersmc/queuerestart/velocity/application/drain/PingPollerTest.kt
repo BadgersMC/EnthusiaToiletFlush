@@ -47,7 +47,7 @@ class PingPollerTest {
         val proxy = FakeProxy(reachable = false)
         val finished = mutableListOf<ServerId>()
 
-        val poller = PingPoller(registry, proxy, finished::add, pingPollSeconds = 3)
+        val poller = PingPoller(registry, proxy, { srv, _ -> finished.add(srv) }, pingPollSeconds = 3)
         poller.tick(Instant.parse("2026-01-01T00:00:00Z"))
 
         assertThat(registry.get(survival).state).isEqualTo(RestartState.SERVER_DOWN)
@@ -60,7 +60,7 @@ class PingPollerTest {
         val proxy = FakeProxy(reachable = false)
         val finished = mutableListOf<ServerId>()
 
-        val poller = PingPoller(registry, proxy, finished::add, pingPollSeconds = 3)
+        val poller = PingPoller(registry, proxy, { srv, _ -> finished.add(srv) }, pingPollSeconds = 3)
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
         poller.tick(t0) // RESTART_SENT → SERVER_DOWN
 
@@ -75,7 +75,7 @@ class PingPollerTest {
         primeRestartSent(registry)
         val proxy = FakeProxy(reachable = false)
         val finished = mutableListOf<ServerId>()
-        val poller = PingPoller(registry, proxy, finished::add, pingPollSeconds = 3)
+        val poller = PingPoller(registry, proxy, { srv, _ -> finished.add(srv) }, pingPollSeconds = 3)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
         poller.tick(t0)
@@ -92,7 +92,7 @@ class PingPollerTest {
         primeRestartSent(registry)
         val proxy = FakeProxy(reachable = true)
         val finished = mutableListOf<ServerId>()
-        val poller = PingPoller(registry, proxy, finished::add, pingPollSeconds = 5)
+        val poller = PingPoller(registry, proxy, { srv, _ -> finished.add(srv) }, pingPollSeconds = 5)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
         poller.tick(t0) // → SERVER_DOWN
@@ -110,7 +110,7 @@ class PingPollerTest {
         // IDLE coord
         val proxy = FakeProxy(reachable = true)
         val finished = mutableListOf<ServerId>()
-        val poller = PingPoller(registry, proxy, finished::add, pingPollSeconds = 3)
+        val poller = PingPoller(registry, proxy, { srv, _ -> finished.add(srv) }, pingPollSeconds = 3)
 
         registry.get(survival) // creates in IDLE
         poller.tick(Instant.parse("2026-01-01T00:00:00Z"))

@@ -25,6 +25,12 @@ interface MessagingPort {
     /** Register a handler for `DrainAck` (0x02) from any backend. */
     fun onDrainAck(handler: (ServerId, Int) -> Unit)
 
-    /** Register a handler for `CheckHacksResult` (0x20) from any backend. */
-    fun onCheckHacksResult(handler: (PlayerId, CheckOutcome) -> Unit)
+    /**
+     * Register a handler for `CheckHacksResult` (0x20). Handler receives
+     * the SOURCE backend that delivered the verdict — REQ-090 (finding B)
+     * — so the application layer can reject cross-backend spoofs from a
+     * compromised minigame backend forging CLEAN for a player it doesn't
+     * actually host.
+     */
+    fun onCheckHacksResult(handler: (ServerId, PlayerId, CheckOutcome) -> Unit)
 }

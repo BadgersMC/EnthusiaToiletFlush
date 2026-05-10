@@ -63,8 +63,12 @@ class RestartOrchestrator(
 
     /** Wires the inbound subscriptions on [MessagingPort]. Call once. */
     fun start() {
-        messaging.onCheckHacksResult { player, outcome ->
-            gate.onResult(player, outcome)
+        // REQ-040: route CheckHacks verdicts through the rejoin service
+        // so a DETECTED player never reaches the queue. Routing directly
+        // to gate.onResult (the prior wiring) updated gate state but
+        // never blocked the enqueue path — dead-code anti-cheat bypass.
+        messaging.onCheckHacksResult { source, player, outcome ->
+            rejoin.onCheckHacksResult(source, player, outcome)
         }
     }
 
@@ -205,10 +209,10 @@ class RestartOrchestrator(
     }
 
     /** Called by PingPoller after coord.serverUp(). */
-    fun finishRejoin(target: ServerId) {
+    fun finishRejoin(target: ServerId, nowSeconds: Long) {
         val coord = registry.get(target)
         if (coord.state != RestartState.REJOIN_RELEASE) return
-        coord.cohort?.let { rejoin.enqueueRejoin(target, it) }
+        coord.cohort?.let { rejoin.enqueueRejoin(target, it, nowSeconds) }
         coord.releaseComplete()
     }
 }

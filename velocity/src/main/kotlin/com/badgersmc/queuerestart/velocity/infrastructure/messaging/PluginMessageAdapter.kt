@@ -10,6 +10,7 @@ import com.badgersmc.queuerestart.common.protocol.RestartNowMessage
 import com.badgersmc.queuerestart.velocity.application.ports.MessagingPort
 import com.badgersmc.queuerestart.velocity.domain.id.PlayerId
 import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Pure send/receive abstraction. The Velocity-bound implementation
@@ -33,8 +34,9 @@ class PluginMessageAdapter(
     private val codec: Codec = Codec(),
 ) : MessagingPort {
 
-    private val drainAckHandlers = mutableListOf<(ServerId, Int) -> Unit>()
-    private val checkResultHandlers = mutableListOf<(PlayerId, CheckOutcome) -> Unit>()
+    // Handlers register at startup, dispatch on the Velocity event thread.
+    private val drainAckHandlers = CopyOnWriteArrayList<(ServerId, Int) -> Unit>()
+    private val checkResultHandlers = CopyOnWriteArrayList<(ServerId, PlayerId, CheckOutcome) -> Unit>()
 
     override fun sendDrainRequest(target: ServerId) {
         transport.send(target, codec.encode(DrainRequestMessage))
@@ -48,7 +50,7 @@ class PluginMessageAdapter(
         drainAckHandlers += handler
     }
 
-    override fun onCheckHacksResult(handler: (PlayerId, CheckOutcome) -> Unit) {
+    override fun onCheckHacksResult(handler: (ServerId, PlayerId, CheckOutcome) -> Unit) {
         checkResultHandlers += handler
     }
 
@@ -64,8 +66,16 @@ class PluginMessageAdapter(
         }
         when (message) {
             is DrainAckMessage -> drainAckHandlers.forEach { it(source, message.remainingPlayers) }
-            is CheckHacksResultMessage -> checkResultHandlers.forEach {
-                it(PlayerId(message.playerId), message.outcome)
+            is CheckHacksResultMessage -> {
+                // SECURITY (REQ-090, finding B): forward the source server
+                // alongside the verdict so the rejoin service can verify
+                // the player is actually on the source backend before
+                // accepting the verdict. Without this, any backend can
+                // forge a CLEAN verdict for any player on any other
+                // backend → anti-cheat bypass.
+                checkResultHandlers.forEach {
+                    it(source, PlayerId(message.playerId), message.outcome)
+                }
             }
             else -> { /* proxy→backend frames travelling the wrong way — ignore */ }
         }

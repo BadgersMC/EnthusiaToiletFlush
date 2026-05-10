@@ -123,8 +123,17 @@ class SchedRestartCommand(
                 send(ctx, "&aArmed restart for &f${result.server.value}&a — countdown ${result.durationSeconds}s.")
             is SchedCommandResult.Cancelled ->
                 send(ctx, "&aCancelled restart for &f${result.server.value}&a.")
-            is SchedCommandResult.Rejected ->
-                send(ctx, "&cRejected: ${result.reason}")
+            is SchedCommandResult.Rejected -> {
+                // SECURITY (REQ-090, finding #9): the reason string may
+                // include text derived from user input or exception
+                // messages. Rendering it through MiniMessage would
+                // interpret embedded <click>/<run_command> tags.
+                // Render as plain text + the prefix label.
+                ctx.source.sendMessage(
+                    Component.text("Rejected: ", NamedTextColor.RED)
+                        .append(Component.text(result.reason, NamedTextColor.WHITE)),
+                )
+            }
             is SchedCommandResult.Status -> renderStatus(ctx, result)
         }
     }

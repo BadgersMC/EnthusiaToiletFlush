@@ -19,7 +19,7 @@ import java.time.Instant
 class PingPoller(
     private val registry: CoordinatorRegistry,
     private val proxy: ProxyPort,
-    private val onReady: (ServerId) -> Unit,
+    private val onReady: (ServerId, Long) -> Unit,
     private val pingPollSeconds: Int,
 ) {
 
@@ -38,7 +38,7 @@ class PingPoller(
                     lastPingAt[target] = now
                     if (proxy.isReachable(target)) {
                         coord.serverUp()
-                        onReady(target)
+                        onReady(target, now.epochSecond)
                     }
                 }
                 else -> {}

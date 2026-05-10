@@ -23,10 +23,20 @@ class QRestartAdminCommandHandler(
     private val config: ConfigPort,
     private val scheduleService: ScheduleService,
     private val schedRestartHandler: SchedRestartCommandHandler,
+    /**
+     * SECURITY (REQ-090): callback fired after [ConfigPort.reload] so the
+     * infrastructure layer can re-derive any state that depends on the
+     * snapshot — notably the `VelocityProxyServerBackend.withRankLadder`
+     * probe set. Without this, a rank-ladder edit + /qrestart reload
+     * leaves new nodes unprobed and players slip through with default
+     * queue weights.
+     */
+    private val onReload: () -> Unit = {},
 ) {
 
     fun reload(): AdminCommandResult {
         config.reload()
+        onReload()
         // Schedules are owned by the backends and discovered via SLP — the
         // discovery poller refreshes them on its own cadence, so /qrestart
         // reload only needs to reparse proxy-side settings (countdown

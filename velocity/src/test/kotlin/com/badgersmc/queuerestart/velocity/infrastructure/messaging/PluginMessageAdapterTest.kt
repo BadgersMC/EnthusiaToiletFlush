@@ -68,10 +68,12 @@ class PluginMessageAdapterTest {
     }
 
     @Test
-    fun `inbound CheckHacksResult dispatches to registered handler`() {
+    fun `inbound CheckHacksResult dispatches to handler with source server (REQ-090 finding B)`() {
         val adapter = PluginMessageAdapter(FakeTransport())
-        val received = mutableListOf<Pair<PlayerId, CheckOutcome>>()
-        adapter.onCheckHacksResult { player, outcome -> received += player to outcome }
+        val received = mutableListOf<Triple<ServerId, PlayerId, CheckOutcome>>()
+        adapter.onCheckHacksResult { source, player, outcome ->
+            received += Triple(source, player, outcome)
+        }
 
         val pid = UUID.randomUUID()
         adapter.handleInbound(
@@ -79,7 +81,7 @@ class PluginMessageAdapterTest {
             codec.encode(CheckHacksResultMessage(pid, CheckOutcome.DETECTED)),
         )
 
-        assertThat(received).containsExactly(PlayerId(pid) to CheckOutcome.DETECTED)
+        assertThat(received).containsExactly(Triple(target, PlayerId(pid), CheckOutcome.DETECTED))
     }
 
     @Test

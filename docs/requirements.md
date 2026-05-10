@@ -42,3 +42,7 @@
 - REQ-060: If an operator targets the configured hub server with `/schedrestart`, then the system shall refuse the request and log an error.
 - REQ-061: If two restart requests arrive for the same target server while one is already armed, then the system shall reject the second request and inform the operator.
 - REQ-062: If the companion plugin is missing on the target server when a restart is requested, then the system shall refuse to arm the restart and log an error.
+
+## Security hardening
+- REQ-090: While the system processes inbound traffic on either `qrestart:v1` plugin-message frames or `QR_POLL:` SLP handshakes, the system shall reject any frame whose source cannot be authenticated to a registered backend server, drop client-origin plugin-message frames on the proxy before forwarding, refuse non-`SHUTDOWN` arm modes on the SLP poll-back path, gate every CheckHacks verdict on the player being currently present on the source backend, restrict the schedule-announce SLP sample to loopback/RFC1918/link-local peers unless explicitly opened, enforce a 64-character `[A-Za-z0-9_.-]` constraint on parsed server-ids, and back every cross-thread shared collection with a thread-safe implementation.
+  - Note: phase 1 closes the immediate exploitability gaps (findings #1, #3, #4, #5, #6, B, C, D, #8, #9, #10, I from the May 2026 peer audit). Phase 2 will introduce a shared secret + HMAC over both channels to close the remaining authenticity gaps (findings A, B, E, G).
