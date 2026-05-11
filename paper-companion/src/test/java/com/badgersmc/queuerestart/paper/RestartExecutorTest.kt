@@ -21,12 +21,16 @@ class RestartExecutorTest {
     }
 
     private class CapturingScheduler : RestartScheduler {
-        data class ScheduledRun(val delaySeconds: Int, val action: () -> Unit)
+        data class ScheduledRun(val delaySeconds: Int, val action: () -> Unit, var cancelled: Boolean = false)
         val queued = mutableListOf<ScheduledRun>()
-        override fun runAfterSeconds(delaySeconds: Int, action: () -> Unit) {
-            queued += ScheduledRun(delaySeconds, action)
+        override fun runAfterSeconds(delaySeconds: Int, action: () -> Unit): ScheduledHandle {
+            val run = ScheduledRun(delaySeconds, action)
+            queued += run
+            return object : ScheduledHandle { override fun cancel() { run.cancelled = true } }
         }
-        fun fireAll() = queued.toList().also { queued.clear() }.forEach { it.action() }
+        fun fireAll() = queued.toList().also { queued.clear() }
+            .filterNot { it.cancelled }
+            .forEach { it.action() }
     }
 
     @Test
@@ -67,6 +71,35 @@ class RestartExecutorTest {
         assertThatThrownBy {
             RestartExecutor(ctl).execute(RestartMode.SHUTDOWN, "", delaySeconds = -1)
         }.isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test
+    fun `abort cancels a pending scheduled shutdown so the action never fires`() {
+        val ctl = FakeControl()
+        val sched = CapturingScheduler()
+        val exec = RestartExecutor(ctl, sched)
+
+        exec.execute(RestartMode.SHUTDOWN, "", delaySeconds = 60)
+        assertThat(exec.abort()).isTrue()
+
+        sched.fireAll() // cancelled entries are skipped
+        assertThat(ctl.shutdownCalls).isEqualTo(0)
+        assertThat(exec.abort()).isFalse() // idempotent
+    }
+
+    @Test
+    fun `re-arm cancels the prior pending shutdown so only the latest fires`() {
+        val ctl = FakeControl()
+        val sched = CapturingScheduler()
+        val exec = RestartExecutor(ctl, sched)
+
+        exec.execute(RestartMode.SHUTDOWN, "", delaySeconds = 60)
+        exec.execute(RestartMode.SHUTDOWN, "", delaySeconds = 120)
+
+        sched.fireAll()
+        // Two scheduler entries existed, the first got cancelled by the re-arm;
+        // only one shutdown actually fires.
+        assertThat(ctl.shutdownCalls).isEqualTo(1)
     }
 
     @Test

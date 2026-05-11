@@ -61,12 +61,14 @@ class RestartOrchestratorTest {
         data class RestartCall(val server: ServerId, val mode: RestartMode, val arg: String, val delaySeconds: Int)
         val drainSent = mutableListOf<ServerId>()
         val restartSent = mutableListOf<RestartCall>()
+        val cancelSent = mutableListOf<ServerId>()
         var checkResultHandler: ((ServerId, PlayerId, CheckOutcome) -> Unit)? = null
         var drainAckHandler: ((ServerId, Int) -> Unit)? = null
         override fun sendDrainRequest(target: ServerId) { drainSent += target }
         override fun sendRestartNow(target: ServerId, mode: RestartMode, argument: String, delaySeconds: Int) {
             restartSent += RestartCall(target, mode, argument, delaySeconds)
         }
+        override fun sendRestartCancel(target: ServerId) { cancelSent += target }
         override fun onDrainAck(handler: (ServerId, Int) -> Unit) { drainAckHandler = handler }
         override fun onCheckHacksResult(handler: (ServerId, PlayerId, CheckOutcome) -> Unit) {
             checkResultHandler = handler

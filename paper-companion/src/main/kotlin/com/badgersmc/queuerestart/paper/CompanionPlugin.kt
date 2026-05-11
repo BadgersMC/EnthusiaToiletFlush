@@ -35,7 +35,8 @@ class CompanionPlugin : JavaPlugin() {
         val scheduler = RestartScheduler { delaySeconds, action ->
             // Bukkit ticks at 20 Hz. delay==0 still goes through runTaskLater
             // so the action runs on the main thread regardless of caller.
-            server.scheduler.runTaskLater(this, Runnable { action() }, delaySeconds * 20L)
+            val task = server.scheduler.runTaskLater(this, Runnable { action() }, delaySeconds * 20L)
+            object : ScheduledHandle { override fun cancel() = task.cancel() }
         }
         val executor = RestartExecutor(BukkitServerControl(), scheduler)
         listener = ProxyMessageListener(this, executor)

@@ -96,6 +96,11 @@ class RestartOrchestrator(
         audience.broadcast(target, cfg.countdown.cancelMessage, mapOf("server" to target.value))
         state.remove(target)
         pendingArmStore.clear(target)
+        // Tell the companion to abort the Bukkit.shutdown() it scheduled
+        // when RestartNow arrived. Without this the proxy-side cancel is
+        // cosmetic and the backend still shuts down on the original
+        // delay.
+        messaging.sendRestartCancel(target)
     }
 
     private fun tickArmed(

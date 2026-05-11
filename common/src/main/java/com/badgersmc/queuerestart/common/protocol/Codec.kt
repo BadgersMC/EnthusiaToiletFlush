@@ -31,6 +31,7 @@ class Codec {
                     out.writeInt(message.delaySeconds)
                     out.writeUTF(message.argument)
                 }
+                is RestartCancelMessage -> out.writeByte(TYPE_RESTART_CANCEL.toInt())
                 is CheckHacksResultMessage -> {
                     out.writeByte(TYPE_CHECK_HACKS_RESULT.toInt())
                     out.writeLong(message.playerId.mostSignificantBits)
@@ -57,6 +58,7 @@ class Codec {
                     requireFullyConsumed(input)
                     RestartNowMessage(mode, arg, delaySeconds)
                 }
+                TYPE_RESTART_CANCEL -> RestartCancelMessage.also { requireFullyConsumed(input) }
                 TYPE_CHECK_HACKS_RESULT -> {
                     val msb = input.readLong()
                     val lsb = input.readLong()
@@ -85,6 +87,7 @@ class Codec {
         const val TYPE_DRAIN_REQUEST: Byte = 0x01
         const val TYPE_DRAIN_ACK: Byte = 0x02
         const val TYPE_RESTART_NOW: Byte = 0x10
+        const val TYPE_RESTART_CANCEL: Byte = 0x11
         const val TYPE_CHECK_HACKS_RESULT: Byte = 0x20
     }
 }

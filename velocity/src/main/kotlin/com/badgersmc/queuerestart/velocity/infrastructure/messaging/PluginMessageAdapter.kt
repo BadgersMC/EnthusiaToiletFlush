@@ -5,6 +5,7 @@ import com.badgersmc.queuerestart.common.protocol.CheckOutcome
 import com.badgersmc.queuerestart.common.protocol.Codec
 import com.badgersmc.queuerestart.common.protocol.DrainAckMessage
 import com.badgersmc.queuerestart.common.protocol.DrainRequestMessage
+import com.badgersmc.queuerestart.common.protocol.RestartCancelMessage
 import com.badgersmc.queuerestart.common.protocol.RestartMode
 import com.badgersmc.queuerestart.common.protocol.RestartNowMessage
 import com.badgersmc.queuerestart.velocity.application.ports.MessagingPort
@@ -44,6 +45,10 @@ class PluginMessageAdapter(
 
     override fun sendRestartNow(target: ServerId, mode: RestartMode, argument: String, delaySeconds: Int) {
         transport.send(target, codec.encode(RestartNowMessage(mode, argument, delaySeconds)))
+    }
+
+    override fun sendRestartCancel(target: ServerId) {
+        transport.send(target, codec.encode(RestartCancelMessage))
     }
 
     override fun onDrainAck(handler: (ServerId, Int) -> Unit) {

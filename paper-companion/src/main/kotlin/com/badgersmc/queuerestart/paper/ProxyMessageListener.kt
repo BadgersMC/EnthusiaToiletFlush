@@ -3,6 +3,7 @@ package com.badgersmc.queuerestart.paper
 import com.badgersmc.queuerestart.common.protocol.CheckHacksResultMessage
 import com.badgersmc.queuerestart.common.protocol.Codec
 import com.badgersmc.queuerestart.common.protocol.DrainAckMessage
+import com.badgersmc.queuerestart.common.protocol.RestartCancelMessage
 import com.badgersmc.queuerestart.common.protocol.RestartNowMessage
 import org.bukkit.entity.Player
 import org.bukkit.plugin.Plugin
@@ -45,6 +46,13 @@ class ProxyMessageListener(
                 } catch (t: Throwable) {
                     plugin.logger.log(Level.SEVERE, "queue-restart: RestartNow execution failed", t)
                 }
+            }
+            is RestartCancelMessage -> {
+                val cancelled = executor.abort()
+                plugin.logger.info(
+                    if (cancelled) "queue-restart: RestartCancel received — pending shutdown aborted"
+                    else "queue-restart: RestartCancel received — no pending shutdown to abort"
+                )
             }
             else -> {
                 // DrainRequest is advisory; CheckHacksResult/DrainAck are

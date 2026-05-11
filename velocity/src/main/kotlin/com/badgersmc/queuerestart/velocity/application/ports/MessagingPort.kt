@@ -22,6 +22,14 @@ interface MessagingPort {
      */
     fun sendRestartNow(target: ServerId, mode: RestartMode, argument: String, delaySeconds: Int)
 
+    /**
+     * Abort a previously sent `RestartNow` that the companion already
+     * scheduled. Used by `/schedrestart cancel` so a cancelled countdown
+     * doesn't still result in `Bukkit.shutdown()` after the delay
+     * elapses. Idempotent.
+     */
+    fun sendRestartCancel(target: ServerId)
+
     /** Register a handler for `DrainAck` (0x02) from any backend. */
     fun onDrainAck(handler: (ServerId, Int) -> Unit)
 

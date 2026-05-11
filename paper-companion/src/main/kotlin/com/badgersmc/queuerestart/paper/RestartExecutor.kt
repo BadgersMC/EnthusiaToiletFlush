@@ -13,6 +13,11 @@ interface ServerControl {
     fun exitProcess(code: Int)
 }
 
+/** Handle to a scheduled action. `cancel` is idempotent. */
+interface ScheduledHandle {
+    fun cancel()
+}
+
 /**
  * Schedules an action `delaySeconds` from now on the server's main thread.
  * The Paper-bound impl wraps `Bukkit.getScheduler().runTaskLater(…)`.
@@ -21,10 +26,14 @@ interface ServerControl {
  * behave identically to the legacy "fire now" path.
  */
 fun interface RestartScheduler {
-    fun runAfterSeconds(delaySeconds: Int, action: () -> Unit)
+    fun runAfterSeconds(delaySeconds: Int, action: () -> Unit): ScheduledHandle
 
     companion object {
-        val IMMEDIATE: RestartScheduler = RestartScheduler { _, action -> action() }
+        val IMMEDIATE: RestartScheduler = RestartScheduler { _, action ->
+            action()
+            // Action already ran synchronously; nothing to cancel.
+            object : ScheduledHandle { override fun cancel() = Unit }
+        }
     }
 }
 
@@ -36,15 +45,27 @@ fun interface RestartScheduler {
  * to backends with no players — the proxy ships RestartNow at countdown
  * start (while at least one player is on target) and the companion's local
  * timer fires the actual shutdown later.
+ *
+ * [abort] cancels the pending shutdown, used when the proxy sends a
+ * `RestartCancelMessage` (operator ran `/schedrestart cancel`). Without
+ * this, the companion would still fire `Bukkit.shutdown()` after the
+ * original delay despite the proxy-side cancel.
  */
 class RestartExecutor(
     private val control: ServerControl,
     private val scheduler: RestartScheduler = RestartScheduler.IMMEDIATE,
 ) {
 
+    @Volatile
+    private var pending: ScheduledHandle? = null
+
     fun execute(mode: RestartMode, argument: String, delaySeconds: Int) {
         require(delaySeconds >= 0) { "delaySeconds must be ≥ 0; got $delaySeconds" }
-        scheduler.runAfterSeconds(delaySeconds) {
+        // Replace any prior pending shutdown so a re-arm at a different
+        // delay doesn't leave two shutdown tasks racing.
+        pending?.cancel()
+        pending = scheduler.runAfterSeconds(delaySeconds) {
+            pending = null
             when (mode) {
                 RestartMode.SHUTDOWN -> control.shutdown()
                 RestartMode.COMMAND -> control.dispatchConsoleCommand(argument)
@@ -57,5 +78,13 @@ class RestartExecutor(
                 }
             }
         }
+    }
+
+    /** Cancel the pending shutdown if one is scheduled. Idempotent. */
+    fun abort(): Boolean {
+        val handle = pending ?: return false
+        handle.cancel()
+        pending = null
+        return true
     }
 }

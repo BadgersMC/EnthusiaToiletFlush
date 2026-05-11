@@ -37,6 +37,15 @@ data class RestartNowMessage(
     val delaySeconds: Int = 0,
 ) : Message
 
+/**
+ * Aborts a `RestartNowMessage` that the companion already armed but
+ * hasn't yet fired. Used by `/schedrestart cancel` on the proxy so a
+ * cancelled countdown doesn't still result in an actual
+ * `Bukkit.shutdown()` after `delaySeconds` elapses. Idempotent — if the
+ * companion has no pending shutdown the message is a no-op.
+ */
+object RestartCancelMessage : Message
+
 enum class CheckOutcome(val code: Byte) {
     CLEAN(0x01),
     DETECTED(0x02),
