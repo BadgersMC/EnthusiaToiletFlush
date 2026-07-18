@@ -83,6 +83,10 @@ class SchedRestartCommand(
                 BrigadierCommand.literalArgumentBuilder("cancel")
                     .executes { ctx ->
                         val target = resolveTarget(ctx, explicit = null) ?: return@executes 0
+                        if (network?.cancel(target) == true) {
+                            send(ctx, "<green>Cancelled restart for <white>${target.value}<green>.")
+                            return@executes 1
+                        }
                         renderResult(ctx, handler.cancel(target))
                         1
                     }
@@ -104,6 +108,10 @@ class SchedRestartCommand(
                                 }
                                 val target = resolveTarget(ctx, explicit = requested)
                                     ?: return@executes 0
+                                if (network?.cancel(target) == true) {
+                                    send(ctx, "<green>Cancelled restart for <white>${target.value}<green>.")
+                                    return@executes 1
+                                }
                                 renderResult(ctx, handler.cancel(target))
                                 1
                             },

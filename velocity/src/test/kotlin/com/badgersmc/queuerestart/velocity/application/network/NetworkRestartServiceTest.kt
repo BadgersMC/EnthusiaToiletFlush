@@ -112,7 +112,28 @@ class NetworkRestartServiceTest {
         assertThat(control.maintenanceDisables).isGreaterThanOrEqualTo(2)
     }
 
-    private fun service(control: FakeControl, executor: ExternalRestartExecutor = FakeExecutor(mutableListOf()), store: RestartPlanStore = MemoryStore()): NetworkRestartService {
+    @Test
+    fun `cancelling a server target clears its persistent plan and permits rescheduling`() {
+        val cancelled = mutableListOf<ServerId>()
+        val service = service(FakeControl(), backendCancel = cancelled::add)
+        val now = Instant.now()
+        val first = service.createManual(PlanType.SERVER, setOf(smp), now.plusSeconds(600), now, "", "console", false)
+        service.tick(now)
+
+        assertThat(service.cancel(smp)).isTrue()
+        assertThat(first.state).isEqualTo(PlanState.CANCELLED)
+        assertThat(cancelled).containsExactly(smp)
+
+        val replacement = service.createManual(PlanType.SERVER, setOf(smp), now.plusSeconds(900), now, "", "console", false)
+        assertThat(replacement.state).isEqualTo(PlanState.SCHEDULED)
+    }
+
+    private fun service(
+        control: FakeControl,
+        executor: ExternalRestartExecutor = FakeExecutor(mutableListOf()),
+        store: RestartPlanStore = MemoryStore(),
+        backendCancel: (ServerId) -> Unit = {},
+    ): NetworkRestartService {
         val config = NetworkRestartConfig.disabled().copy(
             enabled = true,
             serverIds = mapOf(hub to "hub1234", smp to "smp1234"),
@@ -127,7 +148,7 @@ class NetworkRestartServiceTest {
             control = control,
             store = store,
             backendArm = { server, seconds, _ -> SchedCommandResult.Armed(server, seconds) },
-            backendCancel = {},
+            backendCancel = backendCancel,
             audit = { _, _ -> },
         )
     }

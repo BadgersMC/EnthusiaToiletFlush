@@ -165,16 +165,19 @@ class RestartOrchestratorTest {
     }
 
     @Test
-    fun `cancel clears the pending arm slot (REQ-022)`() {
+    fun `cancel replaces the pending arm with a poll-back tombstone (REQ-022)`() {
         val (orch, b) = setup()
         b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
         val now = Instant.parse("2026-01-01T00:00:00Z")
         orch.tick(now)
         assertThat(b.pendingArmStore.peek(survival, now = now)).isNotNull
 
-        orch.cancel(survival)
+        orch.cancel(survival, now)
 
         assertThat(b.pendingArmStore.peek(survival, now = now)).isNull()
+        assertThat(b.pendingArmStore.consumeDelivery(survival, now = now))
+            .isEqualTo(com.badgersmc.queuerestart.velocity.application.arm.PendingArmStore.Delivery.Cancel)
+        assertThat(b.messaging.cancelSent).containsExactly(survival)
     }
 
     @Test

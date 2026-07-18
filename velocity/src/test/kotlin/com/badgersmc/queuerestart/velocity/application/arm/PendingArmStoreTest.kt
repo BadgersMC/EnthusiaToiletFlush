@@ -78,4 +78,26 @@ class PendingArmStoreTest {
         store.clear(lobby2)
         assertThat(store.peek(lobby2, now = t0)).isNull()
     }
+
+    @Test
+    fun `cancel replaces an undelivered arm with a tombstone`() {
+        val store = PendingArmStore(ttl = Duration.ofSeconds(60))
+        store.put(lobby2, arm, now = t0)
+
+        store.cancel(lobby2, now = t0.plusSeconds(1))
+
+        assertThat(store.consumeDelivery(lobby2, now = t0.plusSeconds(2)))
+            .isEqualTo(PendingArmStore.Delivery.Cancel)
+    }
+
+    @Test
+    fun `a new arm replaces an older cancellation tombstone`() {
+        val store = PendingArmStore(ttl = Duration.ofSeconds(60))
+        store.cancel(lobby2, now = t0)
+
+        store.put(lobby2, arm, now = t0.plusSeconds(1))
+
+        assertThat(store.consumeDelivery(lobby2, now = t0.plusSeconds(2)))
+            .isEqualTo(PendingArmStore.Delivery.Arm(arm))
+    }
 }

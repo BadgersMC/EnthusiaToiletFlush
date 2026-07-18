@@ -1,6 +1,7 @@
 package com.badgersmc.queuerestart.velocity.infrastructure.velocity
 
 import com.badgersmc.queuerestart.common.schedule.ArmEncoding
+import com.badgersmc.queuerestart.common.schedule.CancelEncoding
 import com.badgersmc.queuerestart.common.schedule.ProxyPollHandshake
 import com.badgersmc.queuerestart.velocity.application.arm.PendingArmStore
 import com.badgersmc.queuerestart.velocity.application.ports.ClockPort
@@ -36,16 +37,25 @@ class ProxyPingArmResponder(
         val rawHost = event.connection.rawVirtualHost.orElse(null) ?: return
         val serverId = ProxyPollHandshake.parseHostname(rawHost) ?: return
 
-        val arm = store.consume(ServerId(serverId), clock.now())
-        val sample = if (arm == null) {
+        val delivery = store.consumeDelivery(ServerId(serverId), clock.now())
+        val sample = if (delivery == null) {
             // Empty sample — companion treats absence as "no arm pending".
             emptyList<ServerPing.SamplePlayer>()
         } else {
-            logger.info(
-                "queue-restart: SLP poll-back delivering arm to {} (delay={}s, mode={})",
-                serverId, arm.delaySeconds, arm.mode,
-            )
-            listOf(ServerPing.SamplePlayer(ArmEncoding.encode(arm), ArmEncoding.MARKER_UUID))
+            val encoded = when (delivery) {
+                is PendingArmStore.Delivery.Arm -> {
+                    logger.info(
+                        "queue-restart: SLP poll-back delivering arm to {} (delay={}s, mode={})",
+                        serverId, delivery.value.delaySeconds, delivery.value.mode,
+                    )
+                    ArmEncoding.encode(delivery.value)
+                }
+                PendingArmStore.Delivery.Cancel -> {
+                    logger.info("queue-restart: SLP poll-back delivering cancellation to {}", serverId)
+                    CancelEncoding.VALUE
+                }
+            }
+            listOf(ServerPing.SamplePlayer(encoded, ArmEncoding.MARKER_UUID))
         }
 
         val updated = event.ping.asBuilder()

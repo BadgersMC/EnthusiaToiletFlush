@@ -55,3 +55,10 @@ object ArmEncoding {
         return PendingArm(delaySeconds, mode, argument)
     }
 }
+
+/** Player-independent cancellation signal returned through the same SLP poll-back path as an arm. */
+object CancelEncoding {
+    const val VALUE: String = "QR_CANCEL"
+
+    fun isCancel(name: String): Boolean = name == VALUE
+}
