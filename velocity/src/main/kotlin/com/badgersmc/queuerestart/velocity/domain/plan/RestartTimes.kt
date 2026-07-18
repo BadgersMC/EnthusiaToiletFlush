@@ -16,7 +16,7 @@ object RestartTimes {
         var end = 0
         var seconds = 0L
         for (match in token.findAll(value)) {
-            require(match.range.first == end) { "invalid duration '$raw'" }
+            require(match.range.first == end || value.substring(end, match.range.first).isBlank()) { "invalid duration '$raw'" }
             end = match.range.last + 1
             val amount = match.groupValues[1].toLong()
             val unit = match.groupValues[2].lowercase()

@@ -179,6 +179,7 @@ class QueueRestartPlugin @Inject constructor(
             companionPresent = ::companionPresentFor,
             cohortFor = { target -> cohortFromCurrentRoster(target, proxyPort) },
             options = backendOptions,
+            cancelCoordinator = orchestrator::cancel,
         )
         val networkExecutor = ConfiguredRestartExecutor { cfgSnapshot().networkRestart }
         val networkService = NetworkRestartService(
@@ -187,7 +188,7 @@ class QueueRestartPlugin @Inject constructor(
             executor = networkExecutor,
             control = networkControl,
             store = AtomicRestartPlanStore(dataDirectory.resolve("network-restarts.state")) { logger.warn("queue-restart: {}", it) },
-            backendArm = { target, minutes, silent -> schedRestartHandler.arm(target, minutes, silent) },
+            backendArm = { target, seconds, silent -> schedRestartHandler.armSeconds(target, seconds, silent) },
             backendCancel = { target -> orchestrator.cancel(target) },
             audit = { plan, event -> logger.info("network restart plan {}: {}", plan.id, event) },
         )

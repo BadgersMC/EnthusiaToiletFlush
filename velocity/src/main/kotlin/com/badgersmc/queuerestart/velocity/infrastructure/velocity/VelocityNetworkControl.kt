@@ -63,9 +63,9 @@ class VelocityNetworkControl(private val proxy: ProxyServer) : NetworkControlPor
                 player.disconnect(Component.text("Server restarting", NamedTextColor.RED).append(Component.newline()).append(Component.text("Please reconnect shortly.", NamedTextColor.GRAY)))
                 return CompletableFuture.completedFuture(TransferResult(false, true))
             }
-            return player.createConnectionRequest(targets[index]).connect().toCompletableFuture().thenCompose { result ->
-                if (result.isSuccessful) CompletableFuture.completedFuture(TransferResult(true, false)) else next(index + 1)
-            }
+            return player.createConnectionRequest(targets[index]).connect().toCompletableFuture().handle { result, error ->
+                if (error == null && result.isSuccessful) CompletableFuture.completedFuture(TransferResult(true, false)) else next(index + 1)
+            }.thenCompose { it }
         }
         return next(0)
     }

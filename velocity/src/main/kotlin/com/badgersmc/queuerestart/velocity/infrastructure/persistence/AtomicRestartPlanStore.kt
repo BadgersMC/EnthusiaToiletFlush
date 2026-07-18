@@ -13,6 +13,7 @@ import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class AtomicRestartPlanStore(private val path: Path, private val warning: (String) -> Unit) : RestartPlanStore {
     override fun load(): List<RestartPlan> {
@@ -45,19 +46,25 @@ class AtomicRestartPlanStore(private val path: Path, private val warning: (Strin
         b64(plan.targets.joinToString(",") { it.value }),
         b64(plan.announcedSeconds.joinToString(",")),
         b64(plan.targetResults.entries.joinToString(",") { "${it.key}=${it.value}" }),
+        b64(plan.dispatchedActionKeys.joinToString(",")),
     ).joinToString("|")
 
     private fun decode(line: String): RestartPlan {
         val p = line.split('|')
-        require(p.size == 16) { "invalid restart state record" }
+        require(p.size in 16..17) { "invalid restart state record" }
         return RestartPlan(
             id = UUID.fromString(p[0]), type = PlanType.valueOf(p[1]),
             targets = text(p[13]).split(',').filter(String::isNotBlank).map(::ServerId).toSet(),
             createdAt = Instant.parse(p[3]), executionAt = Instant.parse(p[4]), warningAt = Instant.parse(p[5]),
             reason = text(p[7]), creator = text(p[6]), automaticKey = text(p[8]).ifBlank { null },
             silent = p[9].toBoolean(), state = PlanState.valueOf(p[2]),
-            announcedSeconds = text(p[14]).split(',').filter(String::isNotBlank).map(String::toLong).toMutableSet(),
-            targetResults = text(p[15]).split(',').filter { '=' in it }.associate { it.substringBefore('=') to it.substringAfter('=') }.toMutableMap(),
+            announcedSeconds = ConcurrentHashMap.newKeySet<Long>().also { it += text(p[14]).split(',').filter(String::isNotBlank).map(String::toLong) },
+            targetResults = ConcurrentHashMap<String, String>().also { results ->
+                text(p[15]).split(',').filter { '=' in it }.forEach { results[it.substringBefore('=')] = it.substringAfter('=') }
+            },
+            dispatchedActionKeys = ConcurrentHashMap.newKeySet<String>().also { keys ->
+                if (p.size == 17) keys += text(p[16]).split(',').filter(String::isNotBlank)
+            },
             actionStarted = p[10].toBoolean(), maintenanceEnabled = p[11].toBoolean(), failure = text(p[12]),
         )
     }

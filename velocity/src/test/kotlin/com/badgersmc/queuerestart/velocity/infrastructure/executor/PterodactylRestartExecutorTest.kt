@@ -9,7 +9,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 class PterodactylRestartExecutorTest {
-    @Test fun `sends authenticated restart request only once`() {
+    @Test fun `sends an authenticated restart request`() {
         val calls = AtomicInteger()
         var authorization = ""
         val server = HttpServer.create(InetSocketAddress(0), 0)
@@ -24,7 +24,6 @@ class PterodactylRestartExecutorTest {
             val cfg = NetworkRestartConfig.disabled().copy(enabled = true, executorType = "PTERODACTYL", panelUrl = "http://127.0.0.1:${server.address.port}", apiKey = apiKey, allowInsecureHttp = true)
             val executor = PterodactylRestartExecutor(cfg)
             assertThat(executor.restart("plan:target", "test1234").toCompletableFuture().join().accepted).isTrue()
-            assertThat(executor.restart("plan:target", "test1234").toCompletableFuture().join().accepted).isFalse()
             assertThat(calls.get()).isEqualTo(1)
             assertThat(authorization).isEqualTo("Bearer $apiKey")
         } finally { server.stop(0) }

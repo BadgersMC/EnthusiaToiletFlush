@@ -3,6 +3,7 @@ package com.badgersmc.queuerestart.velocity.domain.plan
 import com.badgersmc.queuerestart.velocity.domain.id.ServerId
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 enum class PlanType { SERVER, PROXY, NETWORK }
 
@@ -30,8 +31,9 @@ data class RestartPlan(
     val automaticKey: String? = null,
     val silent: Boolean = false,
     var state: PlanState = PlanState.SCHEDULED,
-    val announcedSeconds: MutableSet<Long> = mutableSetOf(),
-    val targetResults: MutableMap<String, String> = linkedMapOf(),
+    val announcedSeconds: MutableSet<Long> = ConcurrentHashMap.newKeySet(),
+    val targetResults: MutableMap<String, String> = ConcurrentHashMap(),
+    val dispatchedActionKeys: MutableSet<String> = ConcurrentHashMap.newKeySet(),
     var actionStarted: Boolean = false,
     var maintenanceEnabled: Boolean = false,
     var failure: String = "",
@@ -43,4 +45,6 @@ data class RestartPlan(
         PlanState.TRANSFERRING,
         PlanState.DISPATCHING,
     )
+
+    fun cancellable(): Boolean = state in setOf(PlanState.SCHEDULED, PlanState.COUNTING_DOWN)
 }

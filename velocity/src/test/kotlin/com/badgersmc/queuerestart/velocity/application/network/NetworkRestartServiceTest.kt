@@ -87,7 +87,7 @@ class NetworkRestartServiceTest {
                 override fun load(): List<RestartPlan> = emptyList()
                 override fun save(plans: Collection<RestartPlan>) = Unit
             },
-            backendArm = { server, minutes, _ -> SchedCommandResult.Armed(server, minutes * 60) },
+            backendArm = { server, seconds, _ -> SchedCommandResult.Armed(server, seconds) },
             backendCancel = {},
             audit = { _, _ -> },
         )

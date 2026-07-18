@@ -11,9 +11,9 @@ backend or another restart plugin.
   players on that backend are affected.
 - `proxy` restarts only Velocity. All players are fully disconnected. Backend
   servers remain online.
-- `network` restarts only `network-restart.full-network.members`. It restarts
-  non-hub backends, then hubs, and sends the proxy restart action last. This is
-  not a Pterodactyl-account-wide action.
+- `network` restarts the non-hub backends and hubs listed in
+  `network-restart.full-network.members`, then sends the proxy restart action
+  last. This is not a Pterodactyl-account-wide action.
 
 ## Pterodactyl setup
 

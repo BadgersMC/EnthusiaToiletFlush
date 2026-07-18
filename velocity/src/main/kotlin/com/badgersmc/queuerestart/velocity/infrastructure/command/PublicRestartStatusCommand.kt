@@ -9,6 +9,7 @@ import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.event.ClickEvent
 import net.kyori.adventure.text.format.NamedTextColor
 import java.time.Duration
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -51,10 +52,7 @@ class PublicRestartStatusCommand(
         }
         definitions.forEach { def ->
             val next = service.nextOccurrence(def, now)
-            val prefix = when {
-                def.days.size == 1 -> "${label(PlanType.valueOf(def.type), def.targets.map { it.value })} every ${def.days.first().lowercase().replaceFirstChar(Char::uppercase)}"
-                else -> "Daily ${label(PlanType.valueOf(def.type), def.targets.map { it.value })}"
-            }
+            val prefix = scheduleLabel(def, PlanType.valueOf(def.type))
             val zone = ZoneId.of(def.timezone)
             invocation.source().sendMessage(Component.text("$prefix at ${next.atZone(zone).format(time)} (next in ${RestartTimes.format(Duration.between(now, next))}).", NamedTextColor.YELLOW))
         }
@@ -64,5 +62,13 @@ class PublicRestartStatusCommand(
         PlanType.SERVER -> "${targets.firstOrNull() ?: "Server"} restarts"
         PlanType.PROXY -> "Proxy restarts"
         PlanType.NETWORK -> "Full-network restart"
+    }
+
+    private fun scheduleLabel(def: com.badgersmc.queuerestart.velocity.application.ports.ConfiguredRestartSchedule, type: PlanType): String {
+        val label = label(type, def.targets.map { it.value })
+        if (def.days.isEmpty() || def.days.containsAll(DayOfWeek.entries.map(DayOfWeek::name))) return "Daily $label"
+        val days = DayOfWeek.entries.filter { it.name in def.days }
+            .joinToString(", ") { it.name.lowercase().replaceFirstChar(Char::uppercase) }
+        return "$label every $days"
     }
 }

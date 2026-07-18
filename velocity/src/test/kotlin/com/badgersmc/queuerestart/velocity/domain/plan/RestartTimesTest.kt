@@ -13,6 +13,7 @@ class RestartTimesTest {
         assertThat(RestartTimes.parseDuration("30")).isEqualTo(Duration.ofMinutes(30))
         assertThat(RestartTimes.parseDuration("30 sec")).isEqualTo(Duration.ofSeconds(30))
         assertThat(RestartTimes.parseDuration("1h30m")).isEqualTo(Duration.ofMinutes(90))
+        assertThat(RestartTimes.parseDuration("1h 30m")).isEqualTo(Duration.ofMinutes(90))
         assertThatThrownBy { RestartTimes.parseDuration("0") }.isInstanceOf(IllegalArgumentException::class.java)
         assertThatThrownBy { RestartTimes.parseDuration("-5m") }.isInstanceOf(IllegalArgumentException::class.java)
     }

@@ -4,6 +4,7 @@ import com.badgersmc.queuerestart.velocity.application.ports.ConfiguredRestartSc
 import com.badgersmc.queuerestart.velocity.application.ports.ExternalRestartExecutor
 import com.badgersmc.queuerestart.velocity.application.ports.NetworkControlPort
 import com.badgersmc.queuerestart.velocity.application.ports.NetworkRestartConfig
+import com.badgersmc.queuerestart.velocity.application.ports.PowerActionResult
 import com.badgersmc.queuerestart.velocity.application.ports.RestartNotice
 import com.badgersmc.queuerestart.velocity.application.ports.RestartPlanStore
 import com.badgersmc.queuerestart.velocity.application.schedule.SchedCommandResult
@@ -79,11 +80,10 @@ class NetworkRestartService(
         validate(plan)
         val conflict = plans.values.firstOrNull { it.active() && conflicts(it, plan) }
         if (conflict != null) {
-            if (plan.automaticKey != null || conflict.automaticKey == null) {
+            if (plan.automaticKey != null || conflict.automaticKey == null || conflict.state !in setOf(PlanState.SCHEDULED, PlanState.COUNTING_DOWN)) {
                 throw IllegalArgumentException("conflicts with active plan ${conflict.id}")
             }
-            conflict.state = PlanState.CANCELLED
-            audit(conflict, "automatic plan replaced by manual plan ${plan.id}")
+            cancel(conflict, "automatic plan replaced by manual plan ${plan.id}")
         }
         plans[plan.id] = plan
         save()
@@ -98,22 +98,22 @@ class NetworkRestartService(
     fun allPlans(): List<RestartPlan> = plans.values.sortedBy(RestartPlan::executionAt)
 
     @Synchronized fun cancel(prefix: String): Boolean {
-        val plan = plans.values.firstOrNull { it.active() && it.id.toString().startsWith(prefix) } ?: return false
+        val plan = plans.values.firstOrNull { it.cancellable() && it.id.toString().startsWith(prefix) } ?: return false
         cancel(plan)
         return true
     }
 
     @Synchronized fun cancel(type: PlanType): Boolean {
-        val plan = plans.values.firstOrNull { it.active() && it.type == type } ?: return false
+        val plan = plans.values.firstOrNull { it.cancellable() && it.type == type } ?: return false
         cancel(plan)
         return true
     }
 
-    private fun cancel(plan: RestartPlan) {
+    private fun cancel(plan: RestartPlan, auditEvent: String = "cancelled") {
         plan.state = PlanState.CANCELLED
         if (plan.type == PlanType.SERVER) plan.targets.firstOrNull()?.let(backendCancel)
         if (!plan.silent) cancellation(plan)
-        audit(plan, "cancelled")
+        audit(plan, auditEvent)
         save()
     }
 
@@ -128,8 +128,8 @@ class NetworkRestartService(
         if (now.isBefore(plan.warningAt)) return
         if (plan.state == PlanState.SCHEDULED) {
             if (plan.type == PlanType.SERVER) {
-                val minutes = Duration.between(now, plan.executionAt).toMinutes().coerceAtLeast(1).toInt()
-                when (val result = backendArm(plan.targets.single(), minutes, plan.silent)) {
+                val seconds = Duration.between(now, plan.executionAt).seconds.coerceAtLeast(1).toInt()
+                when (val result = backendArm(plan.targets.single(), seconds, plan.silent)) {
                     is SchedCommandResult.Rejected -> return fail(plan, result.reason)
                     else -> {}
                 }
@@ -187,7 +187,7 @@ class NetworkRestartService(
     }
 
     @Synchronized private fun execute(plan: RestartPlan) {
-        if (plan.actionStarted) return
+        if (plan.actionStarted || plan.state != PlanState.COUNTING_DOWN) return
         plan.actionStarted = true
         plan.state = PlanState.PREFLIGHT
         save()
@@ -215,7 +215,7 @@ class NetworkRestartService(
         save()
         if (!plan.silent) control.broadcast(RestartNotice("NETWORK", "RESTARTING NOW", "The Velocity proxy is restarting.", "All players are being disconnected.", plan.reason))
         control.disconnectAll(RestartNotice("NETWORK", "Network restarting", "The Velocity proxy is restarting.", "Please reconnect shortly.", plan.reason, true))
-        executor.restart("${plan.id}:proxy", cfg.proxyServerId).whenComplete { result, error ->
+        dispatch(plan, "${plan.id}:proxy", cfg.proxyServerId).whenComplete { result, error ->
             if (error != null || !result.accepted) fail(plan, error?.let(::rootMessage) ?: result.detail)
             else complete(plan, "proxy", result.detail)
         }
@@ -242,7 +242,7 @@ class NetworkRestartService(
                 control.disconnectAll(RestartNotice("NETWORK", "Full network restart", "The entire Minecraft network is restarting.", "Please reconnect shortly.", plan.reason, true))
                 restartBatch(plan, cfg.hubServers)
             }
-            .thenCompose { executor.restart("${plan.id}:proxy", cfg.proxyServerId) }
+            .thenCompose { dispatch(plan, "${plan.id}:proxy", cfg.proxyServerId) }
             .whenComplete { proxyResult, error ->
                 if (error != null) fail(plan, rootMessage(error))
                 else {
@@ -259,7 +259,7 @@ class NetworkRestartService(
         var stage: CompletionStage<Void> = CompletableFuture.completedFuture(null)
         for (group in groups) stage = stage.thenCompose {
             CompletableFuture.allOf(*group.map { target ->
-                executor.restart("${plan.id}:${target.value}", cfg.serverIds.getValue(target)).toCompletableFuture()
+                dispatch(plan, "${plan.id}:${target.value}", cfg.serverIds.getValue(target)).toCompletableFuture()
                     .thenAccept { result -> plan.targetResults[target.value] = if (result.accepted) result.detail else "FAILED: ${result.detail}" }
             }.toTypedArray()).thenRun(::save)
         }
@@ -272,9 +272,19 @@ class NetworkRestartService(
         save()
     }
 
+    private fun dispatch(plan: RestartPlan, actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> {
+        if (!plan.dispatchedActionKeys.add(actionKey)) {
+            return CompletableFuture.completedFuture(PowerActionResult(false, "duplicate action blocked"))
+        }
+        save()
+        return executor.restart(actionKey, panelServerId)
+    }
+
     private fun complete(plan: RestartPlan, target: String, detail: String) {
         plan.targetResults[target] = detail
         plan.state = PlanState.COMPLETED
+        control.setMaintenance(false, Duration.ZERO)
+        plan.maintenanceEnabled = false
         audit(plan, "completed via ${executor.name}")
         save()
     }
@@ -283,6 +293,7 @@ class NetworkRestartService(
         plan.failure = detail
         plan.state = PlanState.FAILED
         control.setMaintenance(false, Duration.ZERO)
+        plan.maintenanceEnabled = false
         audit(plan, "failed: $detail")
         save()
     }

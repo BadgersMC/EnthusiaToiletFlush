@@ -13,7 +13,6 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
-import java.util.concurrent.ConcurrentHashMap
 
 class PterodactylRestartExecutor(
     private val config: NetworkRestartConfig,
@@ -23,15 +22,11 @@ class PterodactylRestartExecutor(
         .build(),
 ) : ExternalRestartExecutor {
     override val name: String = "PTERODACTYL"
-    private val submitted = ConcurrentHashMap.newKeySet<String>()
 
     override fun preflight(panelServerId: String): CompletionStage<PowerActionResult> =
         send(panelServerId, power = false, attempt = 0)
 
-    override fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> {
-        if (!submitted.add(actionKey)) {
-            return CompletableFuture.completedFuture(PowerActionResult(false, "duplicate action blocked"))
-        }
+    override fun restart(@Suppress("UNUSED_PARAMETER") actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> {
         return send(panelServerId, power = true, attempt = 0)
     }
 

@@ -106,9 +106,21 @@ class ConfigurateConfigAdapter(
         runCatching { java.time.ZoneId.of(cfg.timezone) }
             .getOrElse { throw IllegalArgumentException("invalid network-restart.timezone '${cfg.timezone}'") }
         require(cfg.executorType in setOf("PTERODACTYL", "DRY_RUN")) { "network-restart.executor must be PTERODACTYL or DRY_RUN" }
+        require(cfg.announcementPointsSeconds.isNotEmpty() && cfg.announcementPointsSeconds.all { it > 0 }) { "announcement points must be positive" }
+        require(cfg.finalCountdownSeconds > 0) { "final-countdown-seconds must be positive" }
+        require(cfg.transferTimeoutSeconds > 0) { "transfer-timeout-seconds must be positive" }
+        require(cfg.backendHeadStartSeconds >= 0) { "backend-head-start-seconds must not be negative" }
+        require(cfg.maintenanceFailureExpirySeconds > 0) { "maintenance-failure-expiry-seconds must be positive" }
+        require(cfg.connectTimeoutSeconds > 0) { "connect-timeout-seconds must be positive" }
+        require(cfg.requestTimeoutSeconds > 0) { "request-timeout-seconds must be positive" }
+        require(cfg.maximumRetries in 0..5) { "maximum-retries must be between 0 and 5" }
         if (cfg.executorType == "PTERODACTYL") {
             val uri = java.net.URI.create(cfg.panelUrl)
-            require(uri.scheme == "https" || cfg.allowInsecureHttp) { "Pterodactyl panel URL must use HTTPS" }
+            require(uri.isAbsolute && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null) {
+                "Pterodactyl panel URL must be an absolute origin URL"
+            }
+            val scheme = uri.scheme.lowercase()
+            require(scheme == "https" || (scheme == "http" && cfg.allowInsecureHttp)) { "Pterodactyl panel URL must use HTTPS" }
             require(cfg.apiKey.isNotBlank()) { "PTERODACTYL_API_KEY is not available" }
             require(cfg.proxyServerId.matches(Regex("[A-Za-z0-9_-]{4,64}"))) { "invalid proxy server identifier" }
         }
