@@ -68,6 +68,7 @@ class NetworkRestartServiceTest {
         service.tick(now.plusSeconds(2))
 
         assertThat(events).containsSubsequence("disconnect", "restart:proxy")
+        assertThat(control.maintenanceDisables).isGreaterThanOrEqualTo(2)
     }
 
     @Test
@@ -83,7 +84,35 @@ class NetworkRestartServiceTest {
         assertThat(control.maintenanceEnables).isGreaterThanOrEqualTo(2)
     }
 
-    private fun service(control: FakeControl, executor: ExternalRestartExecutor = FakeExecutor(mutableListOf())): NetworkRestartService {
+    @Test
+    fun `recovered dispatch never sends a second power action`() {
+        val store = MemoryStore()
+        val executor = HangingExecutor()
+        val now = Instant.now()
+        service(FakeControl(), executor, store).apply {
+            createManual(PlanType.PROXY, emptySet(), now.plusSeconds(1), now, "", "console", false)
+            tick(now.plusSeconds(2))
+        }
+
+        val recovered = service(FakeControl(), executor, store)
+
+        assertThat(executor.requests).isEqualTo(1)
+        assertThat(recovered.allPlans().single().state).isEqualTo(PlanState.NEEDS_REVIEW)
+    }
+
+    @Test
+    fun `failed dispatch clears maintenance`() {
+        val control = FakeControl()
+        val service = service(control, FailingExecutor())
+        val now = Instant.now()
+        service.createManual(PlanType.PROXY, emptySet(), now.plusSeconds(1), now, "", "console", false)
+
+        service.tick(now.plusSeconds(2))
+
+        assertThat(control.maintenanceDisables).isGreaterThanOrEqualTo(2)
+    }
+
+    private fun service(control: FakeControl, executor: ExternalRestartExecutor = FakeExecutor(mutableListOf()), store: RestartPlanStore = MemoryStore()): NetworkRestartService {
         val config = NetworkRestartConfig.disabled().copy(
             enabled = true,
             serverIds = mapOf(hub to "hub1234", smp to "smp1234"),
@@ -96,10 +125,7 @@ class NetworkRestartServiceTest {
             schedules = { emptyList() },
             executor = executor,
             control = control,
-            store = object : RestartPlanStore {
-                override fun load(): List<RestartPlan> = emptyList()
-                override fun save(plans: Collection<RestartPlan>) = Unit
-            },
+            store = store,
             backendArm = { server, seconds, _ -> SchedCommandResult.Armed(server, seconds) },
             backendCancel = {},
             audit = { _, _ -> },
@@ -118,20 +144,40 @@ class NetworkRestartServiceTest {
 
     private class HangingExecutor : ExternalRestartExecutor {
         override val name = "hanging"
+        var requests = 0
         override fun preflight(panelServerId: String): CompletionStage<PowerActionResult> =
             CompletableFuture.completedFuture(PowerActionResult(true, "ok"))
-        override fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> = CompletableFuture()
+        override fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> {
+            requests++
+            return CompletableFuture()
+        }
+    }
+
+    private class FailingExecutor : ExternalRestartExecutor {
+        override val name = "failing"
+        override fun preflight(panelServerId: String): CompletionStage<PowerActionResult> =
+            CompletableFuture.completedFuture(PowerActionResult(true, "ok"))
+        override fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> =
+            CompletableFuture.completedFuture(PowerActionResult(false, "rejected"))
+    }
+
+    private class MemoryStore : RestartPlanStore {
+        private var saved = emptyList<RestartPlan>()
+        override fun load(): List<RestartPlan> = saved
+        override fun save(plans: Collection<RestartPlan>) { saved = plans.toList() }
     }
 
     private class FakeControl(private val events: MutableList<String> = mutableListOf()) : NetworkControlPort {
         val broadcasts = mutableListOf<RestartNotice>()
         var maintenanceEnables = 0
+        var maintenanceDisables = 0
         override fun broadcast(notice: RestartNotice) { broadcasts += notice }
         override fun disconnectAll(notice: RestartNotice) { events += "disconnect" }
         override fun transferAll(from: ServerId, destinations: List<ServerId>): CompletionStage<TransferSummary> =
             CompletableFuture.completedFuture(TransferSummary(0, 0, 0))
         override fun setMaintenance(enabled: Boolean, duration: Duration) {
             if (enabled) maintenanceEnables++
+            else maintenanceDisables++
         }
         override fun maintenanceActive(): Boolean = false
     }
