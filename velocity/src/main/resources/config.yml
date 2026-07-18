@@ -1,3 +1,5 @@
+config-version: 1
+
 hub-server: lobby
 fallback-hubs: [lobby2, lobby3]
 
@@ -26,27 +28,76 @@ rank-ladder:
   default:     0
 
 countdown:
-  marks-seconds: [1200, 600, 300, 120, 60, 30, 10, 5, 4, 3, 2, 1]
-  message:    "<gold>Server <yellow><server></yellow> restarts in <yellow><time></yellow></gold>"
-  message-t0: "<red>Sending you to <yellow><hub></yellow> for restart...</red>"
-  cancel-message: "<green>Restart of <yellow><server></yellow> cancelled.</green>"
+  marks-seconds: [7200, 3600, 1800, 900, 600, 300, 60, 30, 10, 5, 4, 3, 2, 1]
+  message: |-
+    <dark_gray><strikethrough>--------------------------------------------------</strikethrough>
+    <gold>[Server] <bold>SCHEDULED RESTART</bold>
+    <gold>[Server] <gray><yellow><server></yellow> restarts in <yellow><time></yellow>.</gray>
+    <gold>[Server] <gray>You will be moved to <yellow><hub></yellow> automatically.</gray>
+    <dark_gray><strikethrough>--------------------------------------------------</strikethrough>
+  message-t0: |-
+    <dark_gray><strikethrough>--------------------------------------------------</strikethrough>
+    <gold>[Server] <bold>RESTARTING NOW</bold>
+    <gold>[Server] <gray>Moving players to <yellow><hub></yellow>...</gray>
+    <dark_gray><strikethrough>--------------------------------------------------</strikethrough>
+  cancel-message: |-
+    <dark_gray><strikethrough>--------------------------------------------------</strikethrough>
+    <gold>[Server] <bold><green>RESTART CANCELLED</green></bold>
+    <gold>[Server] <gray>The scheduled <yellow><server></yellow> restart has been cancelled.</gray>
+    <dark_gray><strikethrough>--------------------------------------------------</strikethrough>
 
 sounds:
-  20m:  { key: block.note_block.bell,    volume: 0.4, pitch: 1.0 }
-  10m:  { key: block.note_block.bell,    volume: 0.4, pitch: 1.0 }
-  5m:   { key: block.note_block.chime,   volume: 0.5, pitch: 1.0 }
-  2m:   { key: block.note_block.chime,   volume: 0.5, pitch: 1.0 }
-  1m:   { key: block.note_block.pling,   volume: 0.6, pitch: 1.2 }
-  30s:  { key: block.note_block.pling,   volume: 0.6, pitch: 1.2 }
-  tick: { key: ui.button.click,          volume: 0.7, pitch: 1.0 }   # 10..1s
-  t0:   { key: block.beacon.deactivate,  volume: 0.6, pitch: 1.0 }
+  10m:  { key: minecraft:block.note_block.hat, volume: 0.6, pitch: 1.2 }
+  5m:   { key: minecraft:block.note_block.hat, volume: 0.6, pitch: 1.2 }
+  1m:   { key: minecraft:block.note_block.hat, volume: 0.6, pitch: 1.2 }
+  30s:  { key: minecraft:block.note_block.hat, volume: 0.6, pitch: 1.2 }
+  tick: { key: minecraft:block.note_block.hat, volume: 0.6, pitch: 1.2 }
+  t0:   { key: minecraft:block.note_block.hat, volume: 0.6, pitch: 1.2 }
 
-schedules:
-  survival-nightly:
-    server: survival
-    cron: "0 4 * * *"
-    warn-minutes: 20
-  creative-weekly:
-    server: creative
-    cron: "0 5 * * 1"
-    warn-minutes: 15
+# Velocity owns all recurring schedules. The client API key is supplied through
+# the Velocity process environment; never write the key into this file.
+network-restart:
+  enabled: false
+  timezone: America/Indiana/Indianapolis
+  executor: DRY_RUN # DRY_RUN or PTERODACTYL
+  panel-url: https://panel.example.com
+  api-key: ${PTERODACTYL_API_KEY}
+  proxy-server-id: velocity_identifier
+  servers:
+    HUB: hub_identifier
+    SMP: smp_identifier
+  full-network:
+    members: [HUB, SMP]
+    hub-servers: [HUB]
+  announcement-points-seconds: [7200, 3600, 1800, 900, 600, 300, 60, 30, 10]
+  final-countdown-seconds: 5
+  transfer-timeout-seconds: 10
+  backend-head-start-seconds: 3
+  maintenance-failure-expiry-seconds: 60
+  connect-timeout-seconds: 5
+  request-timeout-seconds: 10
+  maximum-retries: 2
+  max-concurrent-actions: 4
+  allow-insecure-http: false
+
+automatic-schedules:
+  daily-smp:
+    enabled: true
+    type: SERVER
+    targets: [SMP]
+    time: "00:00"
+    days: [MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY]
+    warning-window: 2h
+    timezone: America/Indiana/Indianapolis
+    reason: Daily restart
+    silent: false
+  sunday-network:
+    enabled: true
+    type: NETWORK
+    targets: []
+    time: "00:00"
+    days: [SUNDAY]
+    warning-window: 2h
+    timezone: America/Indiana/Indianapolis
+    reason: Weekly full-network restart
+    silent: false

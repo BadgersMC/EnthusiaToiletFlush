@@ -1,0 +1,38 @@
+package com.badgersmc.queuerestart.velocity.application.ports
+
+import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+import com.badgersmc.queuerestart.velocity.domain.plan.RestartPlan
+import java.time.Duration
+import java.util.concurrent.CompletionStage
+
+data class PowerActionResult(val accepted: Boolean, val detail: String)
+
+interface ExternalRestartExecutor {
+    val name: String
+    fun preflight(panelServerId: String): CompletionStage<PowerActionResult>
+    fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult>
+}
+
+interface NetworkControlPort {
+    fun broadcast(notice: RestartNotice)
+    fun disconnectAll(notice: RestartNotice)
+    fun transferAll(from: ServerId, destinations: List<ServerId>): CompletionStage<TransferSummary>
+    fun setMaintenance(enabled: Boolean, duration: Duration)
+    fun maintenanceActive(): Boolean
+}
+
+data class RestartNotice(
+    val type: String,
+    val heading: String,
+    val detail: String,
+    val warning: String,
+    val reason: String = "",
+    val urgent: Boolean = false,
+)
+
+data class TransferSummary(val transferred: Int, val disconnected: Int, val failed: Int)
+
+interface RestartPlanStore {
+    fun load(): List<RestartPlan>
+    fun save(plans: Collection<RestartPlan>)
+}

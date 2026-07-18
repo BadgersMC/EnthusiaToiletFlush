@@ -6,7 +6,7 @@ All permissions live under the `queuerestart.*` namespace.
 
 | Permission | Grants |
 |---|---|
-| `queuerestart.command.schedrestart` | `/schedrestart <minutes> [server]`, `/schedrestart cancel [server]`, `/schedrestart status` |
+| `queuerestart.command.schedrestart` | Backend, proxy, network, clock-time, and silent restart scheduling/cancellation |
 | `queuerestart.command.admin` | `/qrestart reload`, `/qrestart trigger <scheduleName>` |
 
 ## Per-player bypass perms
@@ -15,6 +15,7 @@ All permissions live under the `queuerestart.*` namespace.
 |---|---|
 | `queuerestart.bypass.drain` | Excluded from the drain cohort (REQ-014). Will not be transferred to the hub when a backend restarts; will not be re-queued. |
 | `queuerestart.bypass.checkhacks` | Released into the rejoin queue without waiting for a `CheckHacksResult` (REQ-043). Use sparingly. |
+| `queuerestart.bypass.maintenance` | May join during a temporary proxy/full-network restart maintenance lock. |
 
 ## Rank-ladder perms
 

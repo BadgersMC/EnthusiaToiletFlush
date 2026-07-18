@@ -24,9 +24,10 @@ class SchedRestartCommandHandler(
     private val hubServer: ServerId,
     private val companionPresent: (ServerId) -> Boolean,
     private val cohortFor: (ServerId) -> Cohort,
+    private val options: BackendRestartOptions = BackendRestartOptions(),
 ) {
 
-    fun arm(target: ServerId, durationMinutes: Int): SchedCommandResult {
+    fun arm(target: ServerId, durationMinutes: Int, silent: Boolean = false): SchedCommandResult {
         if (durationMinutes <= 0) {
             return SchedCommandResult.Rejected("duration must be > 0 minutes")
         }
@@ -45,6 +46,7 @@ class SchedRestartCommandHandler(
             )
         }
         coord.arm(cohortFor(target), durationSeconds = durationMinutes * 60)
+        options.setSilent(target, silent)
         return SchedCommandResult.Armed(target, coord.durationSeconds)
     }
 
@@ -52,6 +54,7 @@ class SchedRestartCommandHandler(
         val coord = registry.get(target)
         return try {
             coord.cancel()
+            options.clear(target)
             SchedCommandResult.Cancelled(target)
         } catch (e: IllegalStateException) {
             SchedCommandResult.Rejected(
