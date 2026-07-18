@@ -70,6 +70,19 @@ class NetworkRestartServiceTest {
         assertThat(events).containsSubsequence("disconnect", "restart:proxy")
     }
 
+    @Test
+    fun `active dispatch refreshes maintenance before its failure expiry`() {
+        val control = FakeControl()
+        val service = service(control, HangingExecutor())
+        val now = Instant.now()
+        service.createManual(PlanType.PROXY, emptySet(), now.plusSeconds(1), now, "", "console", false)
+
+        service.tick(now.plusSeconds(2))
+        service.tick(now.plusSeconds(70))
+
+        assertThat(control.maintenanceEnables).isGreaterThanOrEqualTo(2)
+    }
+
     private fun service(control: FakeControl, executor: ExternalRestartExecutor = FakeExecutor(mutableListOf())): NetworkRestartService {
         val config = NetworkRestartConfig.disabled().copy(
             enabled = true,
@@ -103,13 +116,23 @@ class NetworkRestartServiceTest {
         }
     }
 
+    private class HangingExecutor : ExternalRestartExecutor {
+        override val name = "hanging"
+        override fun preflight(panelServerId: String): CompletionStage<PowerActionResult> =
+            CompletableFuture.completedFuture(PowerActionResult(true, "ok"))
+        override fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> = CompletableFuture()
+    }
+
     private class FakeControl(private val events: MutableList<String> = mutableListOf()) : NetworkControlPort {
         val broadcasts = mutableListOf<RestartNotice>()
+        var maintenanceEnables = 0
         override fun broadcast(notice: RestartNotice) { broadcasts += notice }
         override fun disconnectAll(notice: RestartNotice) { events += "disconnect" }
         override fun transferAll(from: ServerId, destinations: List<ServerId>): CompletionStage<TransferSummary> =
             CompletableFuture.completedFuture(TransferSummary(0, 0, 0))
-        override fun setMaintenance(enabled: Boolean, duration: Duration) = Unit
+        override fun setMaintenance(enabled: Boolean, duration: Duration) {
+            if (enabled) maintenanceEnables++
+        }
         override fun maintenanceActive(): Boolean = false
     }
 }

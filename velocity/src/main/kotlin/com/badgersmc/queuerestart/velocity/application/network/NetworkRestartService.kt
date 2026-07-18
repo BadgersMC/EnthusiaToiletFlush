@@ -120,7 +120,12 @@ class NetworkRestartService(
     fun tick(now: Instant) {
         createAutomaticPlans(now)
         plans.values.filter(RestartPlan::active).forEach { plan ->
-            try { tickPlan(plan, now) } catch (error: Exception) { fail(plan, error.message ?: error.javaClass.simpleName) }
+            try {
+                refreshMaintenance(plan)
+                tickPlan(plan, now)
+            } catch (error: Exception) {
+                fail(plan, error.message ?: error.javaClass.simpleName)
+            }
         }
     }
 
@@ -270,6 +275,11 @@ class NetworkRestartService(
         control.setMaintenance(true, Duration.ofSeconds(cfg.maintenanceFailureExpirySeconds))
         plan.maintenanceEnabled = true
         save()
+    }
+
+    private fun refreshMaintenance(plan: RestartPlan) {
+        if (!plan.maintenanceEnabled || plan.state !in setOf(PlanState.PREFLIGHT, PlanState.TRANSFERRING, PlanState.DISPATCHING)) return
+        control.setMaintenance(true, Duration.ofSeconds(config().maintenanceFailureExpirySeconds))
     }
 
     private fun dispatch(plan: RestartPlan, actionKey: String, panelServerId: String): CompletionStage<PowerActionResult> {
