@@ -42,6 +42,12 @@ paper-companion/build/libs/queue-restart-paper-companion-0.1.0-SNAPSHOT.jar
 1. Drop the velocity jar into the proxy's `plugins/` directory.
 2. Drop the companion jar into **every** backend's `plugins/` directory.
 3. Start the proxy first, then the backends.
+
+The Velocity jar does **not** go on backend servers. The existing Paper
+companion jar does **not** go on Velocity. Keep both components installed:
+Velocity owns schedules, maintenance mode, external restart actions, and the
+rejoin queue; the companion performs a normal backend's local shutdown after
+Velocity drains it.
 4. Default config materialises at `plugins/queue-restart/config.yml` —
    edit and run `/qrestart reload`.
 
@@ -57,15 +63,41 @@ above 0.8 emit a startup warning; above 1.0 are rejected (REQ-006).
 | Command | Permission | Purpose |
 |---|---|---|
 | `/schedrestart <minutes> [server]` | `queuerestart.command.schedrestart` | Arm an ad-hoc restart |
+| `/schedrestart <server> <duration> [--silent] [reason...]` | `queuerestart.command.schedrestart` | Schedule a configured backend by name |
+| `/schedrestart proxy <duration> [--silent] [reason...]` | `queuerestart.command.schedrestart` | Restart only Velocity and disconnect everyone |
+| `/schedrestart network <duration> [--silent] [reason...]` | `queuerestart.command.schedrestart` | Restart configured network members, then Velocity |
+| `/schedrestart at server <server> <HH:mm> [--silent] [reason...]` | `queuerestart.command.schedrestart` | Schedule a backend at a clock time |
+| `/schedrestart at proxy\|network <HH:mm> [--silent] [reason...]` | `queuerestart.command.schedrestart` | Schedule a proxy or full-network restart at a clock time |
 | `/schedrestart cancel [server]` | `queuerestart.command.schedrestart` | Cancel armed/counting-down |
+| `/schedrestart cancel <plan-id\|proxy\|network>` | `queuerestart.command.schedrestart` | Cancel a network restart plan |
 | `/schedrestart status` | `queuerestart.command.schedrestart` | Inspect coordinator states |
-| `/qrestart reload` | `queuerestart.command.admin` | Reload config + cron |
+| `/nextrestart` | none | Show the next public restart concisely |
+| `/restartschedule` | none | Show public recurring restarts concisely |
+| `/qrestart reload` | `queuerestart.command.admin` | Reload Velocity configuration |
 | `/qrestart trigger <name>` | `queuerestart.command.admin` | Run named schedule on demand |
 
 Per-player bypass perms and rank-ladder details: see
 [`docs/permissions.md`](docs/permissions.md).
 
 ## CheckHacks integration
+
+## Network-wide restart extension
+
+`network-restart` in the proxy configuration is the authoritative source for
+daily/weekly schedules and Pterodactyl target mappings. Keep the executor at
+`DRY_RUN` until message, transfer, and target validation has been tested. Set
+`PTERODACTYL_API_KEY` in the Velocity process environment before enabling
+`PTERODACTYL`; never add that key to `config.yml`.
+
+`/schedrestart proxy <duration>` restarts only Velocity and disconnects all
+players. `/schedrestart network <duration>` restarts only explicitly configured
+network members and dispatches the proxy action last. Both forms accept
+`--silent` to suppress player announcements. `/nextrestart` and
+`/restartschedule` are public, concise status commands and do not reveal
+silent plans.
+
+See [`docs/network-restarts.md`](docs/network-restarts.md) for Pterodactyl
+setup, dry-run testing, migration, recovery, and troubleshooting.
 
 The companion translates `me.branduzzo.checkHacks.api.CheckCompletedEvent`
 into `CheckHacksResult` plugin messages. CheckHacks remains a
@@ -76,9 +108,9 @@ the additive PR described in [`docs/checkhacks-fork-pr.md`](docs/checkhacks-fork
 
 Unit suite: `./gradlew test` — covers wire codec, rank ladder, countdown
 schedule, restart state machine, drain planner, rejoin service, check gate,
-schedule service, hub fallback, plugin-message adapter, queue adapter,
-configurate adapter, cron-utils scheduler, both command handlers,
-restart executor, CheckHacks bridge.
+hub fallback, plugin-message adapter, queue adapter, Configurate adapter,
+network restart plans, Pterodactyl executor, both command handlers, and the
+CheckHacks bridge.
 
 End-to-end runbook: [`docs/e2e-runbook.md`](docs/e2e-runbook.md).
 

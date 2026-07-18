@@ -50,6 +50,7 @@ class RestartOrchestrator(
     private val restartMode: RestartMode = RestartMode.SHUTDOWN,
     private val restartArg: String = "",
     private val pendingArmStore: PendingArmStore = PendingArmStore(),
+    private val options: BackendRestartOptions = BackendRestartOptions(),
 ) {
 
     private data class TargetState(
@@ -93,7 +94,10 @@ class RestartOrchestrator(
         val cfg = configSupplier()
         coord.cancel()
         broadcaster.cancel(target)
-        audience.broadcast(target, cfg.countdown.cancelMessage, mapOf("server" to target.value))
+        if (!options.isSilent(target)) {
+            audience.broadcast(target, cfg.countdown.cancelMessage, mapOf("server" to target.value))
+        }
+        options.clear(target)
         state.remove(target)
         pendingArmStore.clear(target)
         // Tell the companion to abort the Bukkit.shutdown() it scheduled
@@ -115,6 +119,7 @@ class RestartOrchestrator(
             target,
             CountdownSchedule(cfg.countdown.marksSeconds),
             cfg.hubServer,
+            options.isSilent(target),
         )
         s.countdownStartedAt = now
         coord.beginCountdown()

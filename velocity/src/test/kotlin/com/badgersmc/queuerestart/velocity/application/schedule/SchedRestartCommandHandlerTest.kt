@@ -43,6 +43,12 @@ class SchedRestartCommandHandlerTest {
     }
 
     @Test
+    fun `arm seconds preserves an exact companion delay`() {
+        val result = handler().armSeconds(survival, durationSeconds = 61)
+        assertThat(result).isEqualTo(SchedCommandResult.Armed(survival, 61))
+    }
+
+    @Test
     fun `arm hub target is rejected (REQ-060)`() {
         val result = handler().arm(hub, durationMinutes = 5)
         assertThat(result).isInstanceOf(SchedCommandResult.Rejected::class.java)

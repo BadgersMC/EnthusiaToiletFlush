@@ -32,8 +32,9 @@ restart, exercised against a dev proxy with two backends + a hub.
 2. Watch the proxy log for:
    - `[queue-restart] config loaded from plugins/queue-restart/config.yml`
    - no `sound volume` warnings (default suite stays under 0.8).
-   - `cron schedules registered: …` — should list the two schedules from
-     `config.yml`.
+   - `recurring schedules are configured on Velocity` — automatic plans are
+     created from `automatic-schedules` in `config.yml` when their warning
+     windows begin.
 3. Watch each backend log for:
    - `[queue-restart-companion] enabled` and either
      `CheckHacks integration: present` or `CheckHacks integration: absent`.

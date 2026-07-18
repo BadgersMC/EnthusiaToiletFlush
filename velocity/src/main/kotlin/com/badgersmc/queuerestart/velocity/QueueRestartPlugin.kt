@@ -13,17 +13,14 @@ import com.badgersmc.queuerestart.velocity.application.ports.MessagingPort
 import com.badgersmc.queuerestart.velocity.application.ports.ProxyPort
 import com.badgersmc.queuerestart.velocity.application.ports.QueuePort
 import com.badgersmc.queuerestart.velocity.application.ports.QueueRestartConfig
-import com.badgersmc.queuerestart.velocity.application.ports.SchedulerPort
 import com.badgersmc.queuerestart.velocity.application.ports.SoundCue
-import com.badgersmc.queuerestart.velocity.application.schedule.BackendScheduleCache
-import com.badgersmc.queuerestart.velocity.application.schedule.BackendScheduleSync
+import com.badgersmc.queuerestart.velocity.application.schedule.BackendRestartOptions
 import com.badgersmc.queuerestart.velocity.application.schedule.CoordinatorRegistry
 import com.badgersmc.queuerestart.velocity.application.schedule.CountdownBroadcaster
 import com.badgersmc.queuerestart.velocity.application.schedule.QRestartAdminCommandHandler
 import com.badgersmc.queuerestart.velocity.application.schedule.RestartOrchestrator
 import com.badgersmc.queuerestart.velocity.application.schedule.SchedRestartCommandHandler
-import com.badgersmc.queuerestart.velocity.application.schedule.ScheduleDiscoveryPoller
-import com.badgersmc.queuerestart.velocity.application.schedule.ScheduleService
+import com.badgersmc.queuerestart.velocity.application.network.NetworkRestartService
 import com.badgersmc.queuerestart.velocity.domain.cohort.Cohort
 import com.badgersmc.queuerestart.velocity.domain.cohort.CohortMember
 import com.badgersmc.queuerestart.velocity.domain.id.ServerId
@@ -32,16 +29,19 @@ import com.badgersmc.queuerestart.velocity.infrastructure.audience.AdventureAudi
 import com.badgersmc.queuerestart.velocity.infrastructure.clock.SystemClockAdapter
 import com.badgersmc.queuerestart.velocity.infrastructure.command.QRestartAdminCommand
 import com.badgersmc.queuerestart.velocity.infrastructure.command.SchedRestartCommand
+import com.badgersmc.queuerestart.velocity.infrastructure.command.PublicRestartStatusCommand
 import com.badgersmc.queuerestart.velocity.infrastructure.config.ConfigurateConfigAdapter
 import com.badgersmc.queuerestart.velocity.infrastructure.messaging.PluginMessageAdapter
 import com.badgersmc.queuerestart.velocity.infrastructure.messaging.PluginMessageTransport
 import com.badgersmc.queuerestart.velocity.infrastructure.messaging.VelocityChannelTransport
-import com.badgersmc.queuerestart.velocity.infrastructure.schedule.CronUtilsScheduler
+import com.badgersmc.queuerestart.velocity.infrastructure.executor.ConfiguredRestartExecutor
+import com.badgersmc.queuerestart.velocity.infrastructure.persistence.AtomicRestartPlanStore
 import com.badgersmc.queuerestart.velocity.infrastructure.velocity.ProxyAdapter
 import com.badgersmc.queuerestart.velocity.infrastructure.velocity.ProxyPingArmResponder
 import com.badgersmc.queuerestart.velocity.infrastructure.velocity.QueueAdapter
 import com.badgersmc.queuerestart.velocity.infrastructure.velocity.VelocityProxyServerBackend
 import com.badgersmc.queuerestart.velocity.infrastructure.velocity.VelocityQueueManagerBackend
+import com.badgersmc.queuerestart.velocity.infrastructure.velocity.VelocityNetworkControl
 import com.google.inject.Inject
 import com.velocitypowered.api.event.Subscribe
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent
@@ -60,7 +60,7 @@ import java.time.Duration
  *  2. Build adapters, ports, and application services.
  *  3. Register channel `qrestart:v1` + plugin-message subscriber.
  *  4. Register Brigadier commands.
- *  5. Start the 1 Hz tick task feeding cron, orchestrator, ping poller.
+ *  5. Start the 1 Hz tick task feeding restart, transfer, and rejoin services.
  *
  * implementation.md §1, §4.
  */
@@ -98,6 +98,8 @@ class QueueRestartPlugin @Inject constructor(
         val proxyPort: ProxyPort = ProxyAdapter(proxyBackend)
         val queueBackend = VelocityQueueManagerBackend(proxy, logger)
         val queuePort: QueuePort = QueueAdapter(queueBackend)
+        val networkControl = VelocityNetworkControl(proxy)
+        proxy.eventManager.register(this, networkControl)
         // Break the adapter↔transport construction cycle with a one-shot
         // forwarding indirection: adapter sends through a lambda that resolves
         // to the real transport once it's built.
@@ -110,9 +112,6 @@ class QueueRestartPlugin @Inject constructor(
         val messaging: MessagingPort = pluginMessageAdapter
         proxy.channelRegistrar.register(channelTransport.channelIdentifier)
         proxy.eventManager.register(this, channelTransport)
-
-        val cronScheduler = CronUtilsScheduler()
-        val schedulerPort: SchedulerPort = cronScheduler
 
         // ── domain wiring ────────────────────────────────────────────────
         val rankLadder = RankLadder(cfgSnapshot().rankLadder, cfgSnapshot().rankDefault)
@@ -144,6 +143,7 @@ class QueueRestartPlugin @Inject constructor(
         // REQ-022. Pending arms published here are pulled by the
         // companion's ProxyArmPoller via the ProxyPingArmResponder below.
         val pendingArmStore = PendingArmStore()
+        val backendOptions = BackendRestartOptions()
 
         val orchestrator = RestartOrchestrator(
             registry = coordinatorRegistry,
@@ -160,6 +160,7 @@ class QueueRestartPlugin @Inject constructor(
             restartMode = RestartMode.SHUTDOWN,
             restartArg = "",
             pendingArmStore = pendingArmStore,
+            options = backendOptions,
         )
         orchestrator.start()
 
@@ -177,24 +178,23 @@ class QueueRestartPlugin @Inject constructor(
             hubServer = cfgSnapshot().hubServer,
             companionPresent = ::companionPresentFor,
             cohortFor = { target -> cohortFromCurrentRoster(target, proxyPort) },
+            options = backendOptions,
+            cancelCoordinator = orchestrator::cancel,
         )
-        val scheduleService = ScheduleService(
-            scheduler = schedulerPort,
-            onTrigger = { def -> schedRestartHandler.arm(def.target, def.warnMinutes) },
+        val networkExecutor = ConfiguredRestartExecutor { cfgSnapshot().networkRestart }
+        val networkService = NetworkRestartService(
+            config = { cfgSnapshot().networkRestart },
+            schedules = { cfgSnapshot().schedules },
+            executor = networkExecutor,
+            control = networkControl,
+            store = AtomicRestartPlanStore(dataDirectory.resolve("network-restarts.state")) { logger.warn("queue-restart: {}", it) },
+            backendArm = { target, seconds, silent -> schedRestartHandler.armSeconds(target, seconds, silent) },
+            backendCancel = { target -> orchestrator.cancel(target) },
+            audit = { plan, event -> logger.info("network restart plan {}: {}", plan.id, event) },
         )
-        // Schedules are discovered from each backend's SLP-embedded sample —
-        // companions are the source of truth for their own restart cadence.
-        // The cache subscriber re-translates BackendSchedule entries into
-        // ScheduleDefinitions and reloads scheduleService whenever a change
-        // is observed.
-        val scheduleCache = BackendScheduleCache()
-        BackendScheduleSync(scheduleCache, scheduleService).start()
-        val scheduleDiscoveryPoller = ScheduleDiscoveryPoller(proxyPort, scheduleCache)
-
         val adminHandler = QRestartAdminCommandHandler(
             config = config,
-            scheduleService = scheduleService,
-            schedRestartHandler = schedRestartHandler,
+            triggerSchedule = { name -> runCatching { networkService.triggerConfiguredSchedule(name) != null }.getOrDefault(false) },
             onReload = {
                 // REQ-090 (#6). Refresh the permission probe set so the
                 // rank-ladder additions in the freshly parsed config
@@ -204,25 +204,26 @@ class QueueRestartPlugin @Inject constructor(
         )
 
         // ── commands ─────────────────────────────────────────────────────
-        registerCommand(SchedRestartCommand.LITERAL, SchedRestartCommand(schedRestartHandler).build())
+        registerCommand(SchedRestartCommand.LITERAL, SchedRestartCommand(schedRestartHandler, networkService, cfgSnapshot).build())
         registerCommand(QRestartAdminCommand.LITERAL, QRestartAdminCommand(adminHandler).build())
+        registerSimpleCommand("nextrestart", PublicRestartStatusCommand(networkService, cfgSnapshot, false))
+        registerSimpleCommand("restartschedule", PublicRestartStatusCommand(networkService, cfgSnapshot, true))
 
         // ── 1 Hz proxy tick ──────────────────────────────────────────────
         proxy.scheduler.buildTask(this, Runnable {
             val now = clock.now()
             try {
-                cronScheduler.tick(now)
                 orchestrator.tick(now)
                 pingPoller.tick(now)
-                scheduleDiscoveryPoller.tick(now)
                 rejoinService.tick(now.epochSecond)
+                networkService.tick(now)
             } catch (t: Throwable) {
                 logger.warn("queue-restart tick error", t)
             }
         }).repeat(Duration.ofSeconds(1)).schedule()
 
         logger.info(
-            "queue-restart ready. hub={}, channel={} (schedules learned from backends via SLP)",
+            "queue-restart ready. hub={}, channel={} (recurring schedules are configured on Velocity)",
             cfgSnapshot().hubServer.value,
             VelocityChannelTransport.CHANNEL,
         )
@@ -258,6 +259,11 @@ class QueueRestartPlugin @Inject constructor(
         val mgr = proxy.commandManager
         val meta = mgr.metaBuilder(literal).plugin(this).build()
         mgr.register(meta, brigadier)
+    }
+
+    private fun registerSimpleCommand(literal: String, command: com.velocitypowered.api.command.SimpleCommand) {
+        val meta = proxy.commandManager.metaBuilder(literal).plugin(this).build()
+        proxy.commandManager.register(meta, command)
     }
 
     /** Maps `secondsRemaining` to the named [SoundCue] keyed in `config.yml`. */
