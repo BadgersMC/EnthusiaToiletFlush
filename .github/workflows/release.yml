@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: release
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -29,7 +32,7 @@ jobs:
             BASE=$(grep -oP 'findProperty.*\?:\s*"\K[^"]+' build.gradle.kts)
             MAJOR=$(echo "$BASE" | cut -d. -f1)
             MINOR=$(echo "$BASE" | cut -d. -f2)
-            PATCH=$(echo "$BASE" | cut -d. -f3)
+            PATCH=$(echo "$BASE" | cut -d. -f3 | sed 's/-.*//')
           else
             VER="${LATEST#v}"
             MAJOR=$(echo "$VER" | cut -d. -f1)
