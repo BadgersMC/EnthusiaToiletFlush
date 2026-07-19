@@ -2,6 +2,7 @@ package com.badgersmc.queuerestart.paper
 
 import com.badgersmc.queuerestart.common.protocol.RestartMode
 import com.badgersmc.queuerestart.common.schedule.ArmEncoding
+import com.badgersmc.queuerestart.common.schedule.CancelEncoding
 import com.badgersmc.queuerestart.common.schedule.ProxyPollHandshake
 import org.bukkit.plugin.Plugin
 import java.io.DataInputStream
@@ -38,7 +39,7 @@ class ProxyArmPoller(
     @Volatile private var taskId: Int = -1
     @Volatile private var inFlight: Boolean = false
     @Volatile private var consecutiveFailures: Int = 0
-    @Volatile private var lastArmEncoded: String? = null
+    @Volatile private var lastSignalEncoded: String? = null
 
     fun start() {
         if (taskId != -1) return
@@ -65,16 +66,28 @@ class ProxyArmPoller(
         inFlight = true
         try {
             val response = fetchStatusJson()
-            val match = ARM_REGEX.find(response) ?: run {
+            val match = SIGNAL_REGEX.find(response) ?: run {
                 consecutiveFailures = 0
-                lastArmEncoded = null
+                lastSignalEncoded = null
                 return
             }
             val encoded = match.value
             // Same arm shouldn't fire twice if the proxy somehow re-emits
             // it; rely on consume() proxy-side, but defend in depth here.
-            if (encoded == lastArmEncoded) return
-            lastArmEncoded = encoded
+            if (encoded == lastSignalEncoded) return
+            lastSignalEncoded = encoded
+
+            if (CancelEncoding.isCancel(encoded)) {
+                plugin.server.scheduler.runTask(plugin, Runnable {
+                    val cancelled = executor.abort()
+                    plugin.logger.info(
+                        if (cancelled) "queue-restart: SLP poll-back delivered cancellation; pending shutdown aborted"
+                        else "queue-restart: SLP poll-back delivered cancellation; no pending shutdown to abort"
+                    )
+                })
+                consecutiveFailures = 0
+                return
+            }
 
             val arm = ArmEncoding.decode(encoded) ?: run {
                 plugin.logger.warning("queue-restart: ignoring undecodable arm payload from proxy: $encoded")
@@ -166,7 +179,7 @@ class ProxyArmPoller(
         // sample-player name is JSON-escaped, but neither QR_ARM:'s
         // delimiter ':' nor RestartMode names need escaping, so a literal
         // match works.
-        private val ARM_REGEX = Regex("QR_ARM:[^\"]*")
+        private val SIGNAL_REGEX = Regex("QR_(?:ARM:[^\"]*|CANCEL)")
 
         private fun writeVarInt(out: DataOutputStream, valueIn: Int) {
             var value = valueIn

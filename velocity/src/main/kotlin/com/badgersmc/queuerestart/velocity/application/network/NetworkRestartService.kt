@@ -109,6 +109,14 @@ class NetworkRestartService(
         return true
     }
 
+    @Synchronized fun cancel(target: ServerId): Boolean {
+        val plan = plans.values.firstOrNull {
+            it.cancellable() && it.type == PlanType.SERVER && target in it.targets
+        } ?: return false
+        cancel(plan)
+        return true
+    }
+
     private fun cancel(plan: RestartPlan, auditEvent: String = "cancelled") {
         plan.state = PlanState.CANCELLED
         if (plan.type == PlanType.SERVER) plan.targets.firstOrNull()?.let(backendCancel)

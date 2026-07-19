@@ -88,7 +88,7 @@ class RestartOrchestrator(
     }
 
     /** REQ-005. Cancels the countdown for [target] and broadcasts the cancel message. */
-    fun cancel(target: ServerId) {
+    fun cancel(target: ServerId, now: Instant = Instant.now()) {
         val coord = registry.all()[target] ?: return
         if (coord.state != RestartState.ARMED && coord.state != RestartState.COUNTDOWN) return
         val cfg = configSupplier()
@@ -99,7 +99,10 @@ class RestartOrchestrator(
         }
         options.clear(target)
         state.remove(target)
-        pendingArmStore.clear(target)
+        // Publish a tombstone through the player-independent SLP path as
+        // well as plugin messaging. A companion may already have consumed
+        // the arm while no player is available to carry a plugin message.
+        pendingArmStore.cancel(target, now)
         // Tell the companion to abort the Bukkit.shutdown() it scheduled
         // when RestartNow arrived. Without this the proxy-side cancel is
         // cosmetic and the backend still shuts down on the original

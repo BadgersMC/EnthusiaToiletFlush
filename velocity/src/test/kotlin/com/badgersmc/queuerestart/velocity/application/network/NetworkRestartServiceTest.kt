@@ -1,6 +1,7 @@
 package com.badgersmc.queuerestart.velocity.application.network
 
 import com.badgersmc.queuerestart.velocity.application.ports.ExternalRestartExecutor
+import com.badgersmc.queuerestart.velocity.application.ports.ConfiguredRestartSchedule
 import com.badgersmc.queuerestart.velocity.application.ports.NetworkControlPort
 import com.badgersmc.queuerestart.velocity.application.ports.NetworkRestartConfig
 import com.badgersmc.queuerestart.velocity.application.ports.PowerActionResult
@@ -112,7 +113,60 @@ class NetworkRestartServiceTest {
         assertThat(control.maintenanceDisables).isGreaterThanOrEqualTo(2)
     }
 
-    private fun service(control: FakeControl, executor: ExternalRestartExecutor = FakeExecutor(mutableListOf()), store: RestartPlanStore = MemoryStore()): NetworkRestartService {
+    @Test
+    fun `cancelling a server target clears its persistent plan and permits rescheduling`() {
+        val cancelled = mutableListOf<ServerId>()
+        val service = service(FakeControl(), backendCancel = cancelled::add)
+        val now = Instant.now()
+        val first = service.createManual(PlanType.SERVER, setOf(smp), now.plusSeconds(600), now, "", "console", false)
+        service.tick(now)
+
+        assertThat(service.cancel(smp)).isTrue()
+        assertThat(first.state).isEqualTo(PlanState.CANCELLED)
+        assertThat(cancelled).containsExactly(smp)
+
+        val replacement = service.createManual(PlanType.SERVER, setOf(smp), now.plusSeconds(900), now, "", "console", false)
+        assertThat(replacement.state).isEqualTo(PlanState.SCHEDULED)
+    }
+
+    @Test
+    fun `regular server cancel stops an active daily occurrence without recreating it`() {
+        val cancelled = mutableListOf<ServerId>()
+        val daily = ConfiguredRestartSchedule(
+            name = "daily-smp",
+            type = "SERVER",
+            targets = listOf(smp),
+            time = "00:00",
+            days = emptySet(),
+            warningWindowSeconds = 7200,
+            timezone = "America/Indiana/Indianapolis",
+            reason = "Daily restart",
+            silent = false,
+            enabled = true,
+        )
+        val service = service(FakeControl(), backendCancel = cancelled::add, schedules = listOf(daily))
+        val warningStart = Instant.parse("2026-07-19T02:00:00Z") // 10:00 PM ET
+
+        service.tick(warningStart)
+        val occurrence = service.allPlans().single()
+        assertThat(occurrence.state).isEqualTo(PlanState.COUNTING_DOWN)
+
+        assertThat(service.cancel(smp)).isTrue()
+        service.tick(warningStart.plusSeconds(60))
+
+        assertThat(occurrence.state).isEqualTo(PlanState.CANCELLED)
+        assertThat(service.allPlans()).containsExactly(occurrence)
+        assertThat(service.activePublicPlans()).isEmpty()
+        assertThat(cancelled).containsExactly(smp)
+    }
+
+    private fun service(
+        control: FakeControl,
+        executor: ExternalRestartExecutor = FakeExecutor(mutableListOf()),
+        store: RestartPlanStore = MemoryStore(),
+        backendCancel: (ServerId) -> Unit = {},
+        schedules: List<ConfiguredRestartSchedule> = emptyList(),
+    ): NetworkRestartService {
         val config = NetworkRestartConfig.disabled().copy(
             enabled = true,
             serverIds = mapOf(hub to "hub1234", smp to "smp1234"),
@@ -122,12 +176,12 @@ class NetworkRestartServiceTest {
         )
         return NetworkRestartService(
             config = { config },
-            schedules = { emptyList() },
+            schedules = { schedules },
             executor = executor,
             control = control,
             store = store,
             backendArm = { server, seconds, _ -> SchedCommandResult.Armed(server, seconds) },
-            backendCancel = {},
+            backendCancel = backendCancel,
             audit = { _, _ -> },
         )
     }

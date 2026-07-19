@@ -14,6 +14,12 @@ import org.junit.jupiter.api.Test
 class ArmEncodingTest {
 
     @Test
+    fun `cancel marker is recognized exactly`() {
+        assertThat(CancelEncoding.isCancel(CancelEncoding.VALUE)).isTrue()
+        assertThat(CancelEncoding.isCancel("QR_CANCEL_extra")).isFalse()
+    }
+
+    @Test
     fun `round trips a SHUTDOWN arm with empty argument`() {
         val original = PendingArm(
             delaySeconds = 60,
