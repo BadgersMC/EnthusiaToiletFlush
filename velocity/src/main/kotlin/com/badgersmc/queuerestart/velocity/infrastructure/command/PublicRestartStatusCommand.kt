@@ -50,12 +50,24 @@ class PublicRestartStatusCommand(
             invocation.source().sendMessage(Component.text("No public recurring restarts are scheduled.", NamedTextColor.GRAY))
             return
         }
+        invocation.source().sendMessage(divider())
+        invocation.source().sendMessage(Component.text("RESTART SCHEDULE", NamedTextColor.GOLD).decorate(net.kyori.adventure.text.format.TextDecoration.BOLD))
         definitions.forEach { def ->
             val next = service.nextOccurrence(def, now)
-            val prefix = scheduleLabel(def, PlanType.valueOf(def.type))
+            val label = scheduleLabel(def, PlanType.valueOf(def.type))
             val zone = ZoneId.of(def.timezone)
-            invocation.source().sendMessage(Component.text("$prefix at ${next.atZone(zone).format(time)} (next in ${RestartTimes.format(Duration.between(now, next))}).", NamedTextColor.YELLOW))
+            invocation.source().sendMessage(
+                Component.text("• ", NamedTextColor.GOLD)
+                    .append(Component.text(label, NamedTextColor.YELLOW)),
+            )
+            invocation.source().sendMessage(
+                Component.text("  At ", NamedTextColor.DARK_GRAY)
+                    .append(Component.text(next.atZone(zone).format(time), NamedTextColor.WHITE))
+                    .append(Component.text("  •  Next in ", NamedTextColor.DARK_GRAY))
+                    .append(Component.text(RestartTimes.format(Duration.between(now, next)), NamedTextColor.AQUA)),
+            )
         }
+        invocation.source().sendMessage(divider())
     }
 
     private fun label(type: PlanType, targets: List<String>): String = when (type) {
@@ -71,4 +83,6 @@ class PublicRestartStatusCommand(
             .joinToString(", ") { it.name.lowercase().replaceFirstChar(Char::uppercase) }
         return "$label every $days"
     }
+
+    private fun divider(): Component = Component.text("--------------------------------------------------", NamedTextColor.DARK_GRAY)
 }

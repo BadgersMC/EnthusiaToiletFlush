@@ -47,11 +47,12 @@ class AtomicRestartPlanStore(private val path: Path, private val warning: (Strin
         b64(plan.announcedSeconds.joinToString(",")),
         b64(plan.targetResults.entries.joinToString(",") { "${it.key}=${it.value}" }),
         b64(plan.dispatchedActionKeys.joinToString(",")),
+        plan.completedAt?.toString().orEmpty(),
     ).joinToString("|")
 
     private fun decode(line: String): RestartPlan {
         val p = line.split('|')
-        require(p.size in 16..17) { "invalid restart state record" }
+        require(p.size in 16..18) { "invalid restart state record" }
         return RestartPlan(
             id = UUID.fromString(p[0]), type = PlanType.valueOf(p[1]),
             targets = text(p[13]).split(',').filter(String::isNotBlank).map(::ServerId).toSet(),
@@ -63,9 +64,11 @@ class AtomicRestartPlanStore(private val path: Path, private val warning: (Strin
                 text(p[15]).split(',').filter { '=' in it }.forEach { results[it.substringBefore('=')] = it.substringAfter('=') }
             },
             dispatchedActionKeys = ConcurrentHashMap.newKeySet<String>().also { keys ->
-                if (p.size == 17) keys += text(p[16]).split(',').filter(String::isNotBlank)
+                if (p.size >= 17) keys += text(p[16]).split(',').filter(String::isNotBlank)
             },
-            actionStarted = p[10].toBoolean(), maintenanceEnabled = p[11].toBoolean(), failure = text(p[12]),
+            actionStarted = p[10].toBoolean(), maintenanceEnabled = p[11].toBoolean(),
+            completedAt = p.getOrNull(17)?.takeIf(String::isNotBlank)?.let(Instant::parse),
+            failure = text(p[12]),
         )
     }
 

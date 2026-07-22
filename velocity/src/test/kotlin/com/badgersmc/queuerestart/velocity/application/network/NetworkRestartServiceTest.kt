@@ -17,8 +17,13 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ConcurrentHashMap
 
 class NetworkRestartServiceTest {
     private val hub = ServerId("HUB")
@@ -145,7 +150,7 @@ class NetworkRestartServiceTest {
             enabled = true,
         )
         val service = service(FakeControl(), backendCancel = cancelled::add, schedules = listOf(daily))
-        val warningStart = Instant.parse("2026-07-19T02:00:00Z") // 10:00 PM ET
+        val warningStart = nextDailyWarningStart()
 
         service.tick(warningStart)
         val occurrence = service.allPlans().single()
@@ -158,6 +163,28 @@ class NetworkRestartServiceTest {
         assertThat(service.allPlans()).containsExactly(occurrence)
         assertThat(service.activePublicPlans()).isEmpty()
         assertThat(cancelled).containsExactly(smp)
+    }
+
+    @Test
+    fun `last completed restart queries include proxy network and target history`() {
+        val store = MemoryStore()
+        val now = Instant.now()
+        val smpRestart = RestartPlan(
+            type = PlanType.SERVER, targets = setOf(smp), createdAt = now.minusSeconds(300),
+            executionAt = now.minusSeconds(60), warningAt = now.minusSeconds(360), creator = "console",
+            state = PlanState.COMPLETED, completedAt = now.minusSeconds(120),
+        )
+        val networkRestart = RestartPlan(
+            type = PlanType.NETWORK, targets = setOf(hub, smp), createdAt = now.minusSeconds(600),
+            executionAt = now.minusSeconds(180), warningAt = now.minusSeconds(660), creator = "console",
+            state = PlanState.COMPLETED, completedAt = now.minusSeconds(30),
+        )
+        store.save(listOf(smpRestart, networkRestart))
+        val recovered = service(FakeControl(), store = store)
+
+        assertThat(recovered.lastCompletedServerRestart(smp)?.id).isEqualTo(networkRestart.id)
+        assertThat(recovered.lastCompletedProxyRestart()?.id).isEqualTo(networkRestart.id)
+        assertThat(recovered.lastCompletedServerRestart(hub)?.id).isEqualTo(networkRestart.id)
     }
 
     private fun service(
@@ -215,10 +242,24 @@ class NetworkRestartServiceTest {
             CompletableFuture.completedFuture(PowerActionResult(false, "rejected"))
     }
 
+    private fun nextDailyWarningStart(): Instant {
+        val zone = ZoneId.of("America/Indiana/Indianapolis")
+        val now = Instant.now()
+        val tomorrow = ZonedDateTime.of(LocalDate.ofInstant(now, zone).plusDays(1), LocalTime.MIDNIGHT, zone).toInstant()
+        val following = tomorrow.plus(Duration.ofDays(1))
+        return (if (tomorrow.minusSeconds(7200).isAfter(now)) tomorrow else following).minusSeconds(7200)
+    }
+
     private class MemoryStore : RestartPlanStore {
         private var saved = emptyList<RestartPlan>()
-        override fun load(): List<RestartPlan> = saved
-        override fun save(plans: Collection<RestartPlan>) { saved = plans.toList() }
+        override fun load(): List<RestartPlan> = saved.map(::snapshot)
+        override fun save(plans: Collection<RestartPlan>) { saved = plans.map(::snapshot) }
+
+        private fun snapshot(plan: RestartPlan): RestartPlan = plan.copy(
+            announcedSeconds = ConcurrentHashMap.newKeySet<Long>().also { it += plan.announcedSeconds },
+            targetResults = ConcurrentHashMap(plan.targetResults),
+            dispatchedActionKeys = ConcurrentHashMap.newKeySet<String>().also { it += plan.dispatchedActionKeys },
+        )
     }
 
     private class FakeControl(private val events: MutableList<String> = mutableListOf()) : NetworkControlPort {

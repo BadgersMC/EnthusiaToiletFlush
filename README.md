@@ -73,6 +73,7 @@ above 0.8 emit a startup warning; above 1.0 are rejected (REQ-006).
 | `/schedrestart status` | `queuerestart.command.schedrestart` | Inspect coordinator states |
 | `/nextrestart` | none | Show the next public restart concisely |
 | `/restartschedule` | none | Show public recurring restarts concisely |
+| `/lastrestart` | none | Show when the proxy and configured backends were last restarted |
 | `/qrestart reload` | `queuerestart.command.admin` | Reload Velocity configuration |
 | `/qrestart trigger <name>` | `queuerestart.command.admin` | Run named schedule on demand |
 
