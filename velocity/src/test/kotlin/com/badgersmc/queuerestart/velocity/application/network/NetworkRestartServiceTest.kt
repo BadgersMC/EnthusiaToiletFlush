@@ -145,7 +145,7 @@ class NetworkRestartServiceTest {
             enabled = true,
         )
         val service = service(FakeControl(), backendCancel = cancelled::add, schedules = listOf(daily))
-        val warningStart = Instant.parse("2026-07-19T02:00:00Z") // 10:00 PM ET
+        val warningStart = Instant.parse("2030-07-20T02:00:00Z") // 10:00 PM ET before midnight
 
         service.tick(warningStart)
         val occurrence = service.allPlans().single()
@@ -158,6 +158,20 @@ class NetworkRestartServiceTest {
         assertThat(service.allPlans()).containsExactly(occurrence)
         assertThat(service.activePublicPlans()).isEmpty()
         assertThat(cancelled).containsExactly(smp)
+    }
+
+    @Test
+    fun `last completed restart queries include proxy network and target history`() {
+        val service = service(FakeControl())
+        val now = Instant.now()
+        val smpRestart = service.createManual(PlanType.SERVER, setOf(smp), now.plusSeconds(60), now, "", "console", false)
+        smpRestart.state = PlanState.COMPLETED
+        val networkRestart = service.createManual(PlanType.NETWORK, setOf(hub, smp), now.plusSeconds(120), now, "", "console", false)
+        networkRestart.state = PlanState.COMPLETED
+
+        assertThat(service.lastCompletedServerRestart(smp)).isEqualTo(networkRestart)
+        assertThat(service.lastCompletedProxyRestart()).isEqualTo(networkRestart)
+        assertThat(service.lastCompletedServerRestart(hub)).isEqualTo(networkRestart)
     }
 
     private fun service(

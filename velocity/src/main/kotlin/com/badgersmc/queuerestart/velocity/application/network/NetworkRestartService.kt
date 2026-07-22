@@ -97,6 +97,22 @@ class NetworkRestartService(
 
     fun allPlans(): List<RestartPlan> = plans.values.sortedBy(RestartPlan::executionAt)
 
+    /** Most recent completed restart that included the Velocity proxy. */
+    fun lastCompletedProxyRestart(): RestartPlan? = plans.values
+        .asSequence()
+        .filter { it.state == PlanState.COMPLETED && it.type in setOf(PlanType.PROXY, PlanType.NETWORK) }
+        .maxByOrNull(RestartPlan::executionAt)
+
+    /** Most recent completed restart that included [target]. */
+    fun lastCompletedServerRestart(target: ServerId): RestartPlan? = plans.values
+        .asSequence()
+        .filter {
+            it.state == PlanState.COMPLETED &&
+                target in it.targets &&
+                it.type in setOf(PlanType.SERVER, PlanType.NETWORK)
+        }
+        .maxByOrNull(RestartPlan::executionAt)
+
     @Synchronized fun cancel(prefix: String): Boolean {
         val plan = plans.values.firstOrNull { it.cancellable() && it.id.toString().startsWith(prefix) } ?: return false
         cancel(plan)
