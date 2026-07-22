@@ -35,7 +35,7 @@ class LastRestartCommand(
     }
 
     private fun row(name: String, plan: RestartPlan?, now: Instant): Component {
-        val value = plan?.let { "${RestartTimes.format(Duration.between(it.executionAt, now).coerceAtLeast(Duration.ZERO))} ago" }
+        val value = plan?.completedAt?.let { "${RestartTimes.format(Duration.between(it, now).coerceAtLeast(Duration.ZERO))} ago" }
             ?: "No recorded restart"
         val color = if (plan == null) NamedTextColor.DARK_GRAY else NamedTextColor.YELLOW
         return Component.text("• ", NamedTextColor.GOLD)

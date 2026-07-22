@@ -100,8 +100,8 @@ class NetworkRestartService(
     /** Most recent completed restart that included the Velocity proxy. */
     fun lastCompletedProxyRestart(): RestartPlan? = plans.values
         .asSequence()
-        .filter { it.state == PlanState.COMPLETED && it.type in setOf(PlanType.PROXY, PlanType.NETWORK) }
-        .maxByOrNull(RestartPlan::executionAt)
+        .filter { it.state == PlanState.COMPLETED && it.completedAt != null && it.type in setOf(PlanType.PROXY, PlanType.NETWORK) }
+        .maxByOrNull { it.completedAt!! }
 
     /** Most recent completed restart that included [target]. */
     fun lastCompletedServerRestart(target: ServerId): RestartPlan? = plans.values
@@ -109,9 +109,9 @@ class NetworkRestartService(
         .filter {
             it.state == PlanState.COMPLETED &&
                 target in it.targets &&
-                it.type in setOf(PlanType.SERVER, PlanType.NETWORK)
+                it.completedAt != null && it.type in setOf(PlanType.SERVER, PlanType.NETWORK)
         }
-        .maxByOrNull(RestartPlan::executionAt)
+        .maxByOrNull { it.completedAt!! }
 
     @Synchronized fun cancel(prefix: String): Boolean {
         val plan = plans.values.firstOrNull { it.cancellable() && it.id.toString().startsWith(prefix) } ?: return false
@@ -174,6 +174,7 @@ class NetworkRestartService(
         val remaining = Duration.between(now, plan.executionAt).seconds.coerceAtLeast(0)
         if (plan.type != PlanType.SERVER && !plan.silent) announceDue(plan, remaining)
         if (remaining == 0L && plan.type == PlanType.SERVER) {
+            plan.completedAt = now
             plan.state = PlanState.COMPLETED
             save()
         } else if (remaining == 0L) {
@@ -316,6 +317,7 @@ class NetworkRestartService(
 
     private fun complete(plan: RestartPlan, target: String, detail: String) {
         plan.targetResults[target] = detail
+        plan.completedAt = Instant.now()
         plan.state = PlanState.COMPLETED
         control.setMaintenance(false, Duration.ZERO)
         plan.maintenanceEnabled = false
