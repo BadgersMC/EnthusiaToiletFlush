@@ -1,5 +1,6 @@
 package com.badgersmc.queuerestart.velocity.infrastructure.velocity
 
+import com.badgersmc.queuerestart.velocity.application.drain.HubResolver
 import com.badgersmc.queuerestart.velocity.application.ports.QueueRestartConfig
 import com.badgersmc.queuerestart.velocity.application.schedule.CoordinatorRegistry
 import com.badgersmc.queuerestart.velocity.domain.coordinator.RestartState
@@ -25,6 +26,7 @@ class BackendAccessGuard(
     private val proxy: ProxyServer,
     private val registry: CoordinatorRegistry,
     private val config: () -> QueueRestartConfig,
+    private val hubResolver: HubResolver,
     private val renderer: MiniMessageRenderer = MiniMessageRenderer(),
 ) {
     @Subscribe(order = PostOrder.LAST)
@@ -80,10 +82,11 @@ class BackendAccessGuard(
 
     private fun resolveHub(excluding: RegisteredServer): RegisteredServer? {
         val cfg = config()
-        return (listOf(cfg.hubServer) + cfg.fallbackHubs)
-            .asSequence()
-            .mapNotNull { proxy.getServer(it.value).orElse(null) }
-            .firstOrNull { it.serverInfo.name != excluding.serverInfo.name }
+        val candidates = (listOf(cfg.hubServer) + cfg.fallbackHubs)
+            .filterNot { it.value == excluding.serverInfo.name }
+        val primary = candidates.firstOrNull() ?: return null
+        val selected = hubResolver.resolve(primary, candidates.drop(1)) ?: return null
+        return proxy.getServer(selected.value).orElse(null)
     }
 
     companion object {

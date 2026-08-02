@@ -75,6 +75,7 @@ class RestartOrchestrator(
     }
 
     /** Drive every coordinator forward. Caller supplies wall time. */
+    @Synchronized
     fun tick(now: Instant) {
         val cfg = configSupplier()
         for ((target, coord) in registry.all()) {
@@ -89,6 +90,7 @@ class RestartOrchestrator(
     }
 
     /** REQ-005. Cancels the countdown for [target] and broadcasts the cancel message. */
+    @Synchronized
     fun cancel(target: ServerId, now: Instant = Instant.now()) {
         val coord = registry.all()[target] ?: return
         if (coord.state != RestartState.ARMED && coord.state != RestartState.COUNTDOWN) return
@@ -242,6 +244,7 @@ class RestartOrchestrator(
     }
 
     /** Called by PingPoller after coord.serverUp(). */
+    @Synchronized
     fun finishRejoin(target: ServerId, nowSeconds: Long) {
         val coord = registry.get(target)
         if (coord.state != RestartState.REJOIN_RELEASE) return
