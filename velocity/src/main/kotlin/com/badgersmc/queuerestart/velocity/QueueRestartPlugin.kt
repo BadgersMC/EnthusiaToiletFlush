@@ -98,12 +98,13 @@ class QueueRestartPlugin @Inject constructor(
         val audience: AudiencePort = AdventureAudienceAdapter(proxy)
         val proxyBackend = VelocityProxyServerBackend(proxy, logger)
         val proxyPort: ProxyPort = ProxyAdapter(proxyBackend)
+        val hubResolver = HubResolver(proxyPort)
         val queueBackend = VelocityQueueManagerBackend(proxy, logger)
         val queuePort: QueuePort = QueueAdapter(queueBackend)
         val networkControl = VelocityNetworkControl(
-    proxy = proxy,
-    accessMessages = { cfgSnapshot().accessMessages },
-)
+            proxy = proxy,
+            accessMessages = { cfgSnapshot().accessMessages },
+        )
         proxy.eventManager.register(this, networkControl)
         // Break the adapter↔transport construction cycle with a one-shot
         // forwarding indirection: adapter sends through a lambda that resolves
@@ -121,7 +122,10 @@ class QueueRestartPlugin @Inject constructor(
         // ── domain wiring ────────────────────────────────────────────────
         val rankLadder = RankLadder(cfgSnapshot().rankLadder, cfgSnapshot().rankDefault)
         val coordinatorRegistry = CoordinatorRegistry()
-        proxy.eventManager.register(this, BackendAccessGuard(proxy, coordinatorRegistry, cfgSnapshot))
+        proxy.eventManager.register(
+            this,
+            BackendAccessGuard(proxy, coordinatorRegistry, cfgSnapshot, hubResolver),
+        )
         val countdownBroadcaster = CountdownBroadcaster(
             audience = audience,
             messageTemplate = cfgSnapshot().countdown.message,
@@ -139,7 +143,6 @@ class QueueRestartPlugin @Inject constructor(
             },
         )
         val drainPlanner = DrainPlanner()
-        val hubResolver = HubResolver(proxyPort)
         val checkGate = CheckGate(
             timeoutSeconds = cfgSnapshot().rejoin.checkGateTimeoutSeconds,
             releaseOnTimeout = cfgSnapshot().rejoin.releaseOnTimeout,

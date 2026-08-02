@@ -242,9 +242,13 @@ class NetworkRestartService(
             }
         }.toTypedArray())
             .whenComplete { _, error ->
-                if (error != null) fail(plan, "preflight failed: ${rootMessage(error)}")
-                else if (plan.type == PlanType.PROXY) executeProxy(plan, cfg, executionExecutor)
-                else executeNetwork(plan, cfg, executionExecutor)
+                try {
+                    if (error != null) fail(plan, "preflight failed: ${rootMessage(error)}")
+                    else if (plan.type == PlanType.PROXY) executeProxy(plan, cfg, executionExecutor)
+                    else executeNetwork(plan, cfg, executionExecutor)
+                } catch (dispatchError: Exception) {
+                    fail(plan, rootMessage(dispatchError))
+                }
             }
     }
 
@@ -367,6 +371,7 @@ class NetworkRestartService(
             }
             PlanType.SERVER -> Unit
         }
+        plan.dryRun = true
         plan.completedAt = Instant.now()
         plan.state = PlanState.COMPLETED
         plan.maintenanceEnabled = false
@@ -466,8 +471,7 @@ class NetworkRestartService(
         save()
     }
 
-    private fun RestartPlan.isDryRunCompletion(): Boolean =
-        targetResults.isNotEmpty() && targetResults.values.all { it.startsWith("dry-run:") }
+    private fun RestartPlan.isDryRunCompletion(): Boolean = dryRun
 
     @Synchronized private fun save() = store.save(plans.values)
     private fun rootMessage(error: Throwable): String = generateSequence(error) { it.cause }.last().message ?: error.javaClass.simpleName
