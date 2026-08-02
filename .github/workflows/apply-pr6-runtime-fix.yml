@@ -29,7 +29,9 @@ jobs:
           cat .github/pr6-runtime/queue0 .github/pr6-runtime/queue1 .github/pr6-runtime/queue2 \
             | base64 --decode | gzip -dc \
             > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt
-          cat .github/pr6-runtime/network0 .github/pr6-runtime/network1 .github/pr6-runtime/network2 .github/pr6-runtime/network3 \
+          cat .github/pr6-runtime/network0 .github/pr6-runtime/network1 .github/pr6-runtime/network2 \
+              .github/pr6-runtime/network3a .github/pr6-runtime/network3b \
+              .github/pr6-runtime/network3c .github/pr6-runtime/network3d \
             | base64 --decode | gzip -dc \
             > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
           echo '18b9ebc49ea6526cd2a10b7cdec429e15744b5ba0bf099642c6f4a65275181e1  velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt' | sha256sum --check
