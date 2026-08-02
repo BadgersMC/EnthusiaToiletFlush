@@ -26,8 +26,12 @@ jobs:
 
       - name: Reconstruct reviewed source files
         run: |
-          base64 --decode .github/pr6-runtime/QueueRestartPlugin.kt.gz.b64 | gzip -dc > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt
-          base64 --decode .github/pr6-runtime/NetworkRestartService.kt.gz.b64 | gzip -dc > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
+          cat .github/pr6-runtime/queue0 .github/pr6-runtime/queue1 .github/pr6-runtime/queue2 \
+            | base64 --decode | gzip -dc \
+            > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt
+          cat .github/pr6-runtime/network0 .github/pr6-runtime/network1 .github/pr6-runtime/network2 .github/pr6-runtime/network3 \
+            | base64 --decode | gzip -dc \
+            > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
           echo '18b9ebc49ea6526cd2a10b7cdec429e15744b5ba0bf099642c6f4a65275181e1  velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt' | sha256sum --check
           echo '19fee564652c1ff8cfa1b040e3e763d4bed1d556d13f283be230f7dc05054404  velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt' | sha256sum --check
           rm -rf .github/pr6-runtime
