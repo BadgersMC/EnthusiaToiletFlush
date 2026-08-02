@@ -5,7 +5,7 @@ plugins {
 
 allprojects {
     group = "com.badgersmc.queuerestart"
-    version = "0.1.0-SNAPSHOT"
+    version = findProperty("releaseVersion")?.toString() ?: "0.1.0-SNAPSHOT"
 }
 
 subprojects {

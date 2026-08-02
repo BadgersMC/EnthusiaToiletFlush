@@ -24,11 +24,20 @@ class SchedRestartCommandHandler(
     private val hubServer: ServerId,
     private val companionPresent: (ServerId) -> Boolean,
     private val cohortFor: (ServerId) -> Cohort,
+    private val options: BackendRestartOptions = BackendRestartOptions(),
+    private val cancelCoordinator: (ServerId) -> Unit = { target -> registry.get(target).cancel() },
 ) {
 
-    fun arm(target: ServerId, durationMinutes: Int): SchedCommandResult {
+    fun arm(target: ServerId, durationMinutes: Int, silent: Boolean = false): SchedCommandResult {
         if (durationMinutes <= 0) {
             return SchedCommandResult.Rejected("duration must be > 0 minutes")
+        }
+        return armSeconds(target, durationMinutes * 60, silent)
+    }
+
+    fun armSeconds(target: ServerId, durationSeconds: Int, silent: Boolean = false): SchedCommandResult {
+        if (durationSeconds <= 0) {
+            return SchedCommandResult.Rejected("duration must be > 0 seconds")
         }
         if (target == hubServer) {
             return SchedCommandResult.Rejected("cannot restart the hub server '${target.value}'")
@@ -44,14 +53,23 @@ class SchedRestartCommandHandler(
                 "restart already armed for '${target.value}' (state=${coord.state})",
             )
         }
-        coord.arm(cohortFor(target), durationSeconds = durationMinutes * 60)
+        options.setSilent(target, silent)
+        try {
+            coord.arm(cohortFor(target), durationSeconds = durationSeconds)
+        } catch (error: Exception) {
+            options.clear(target)
+            return SchedCommandResult.Rejected(error.message ?: "could not arm restart")
+        }
         return SchedCommandResult.Armed(target, coord.durationSeconds)
     }
 
     fun cancel(target: ServerId): SchedCommandResult {
         val coord = registry.get(target)
         return try {
-            coord.cancel()
+            if (coord.state !in setOf(RestartState.ARMED, RestartState.COUNTDOWN)) {
+                return SchedCommandResult.Rejected("cannot cancel '${target.value}': not in cancellable state")
+            }
+            cancelCoordinator(target)
             SchedCommandResult.Cancelled(target)
         } catch (e: IllegalStateException) {
             SchedCommandResult.Rejected(

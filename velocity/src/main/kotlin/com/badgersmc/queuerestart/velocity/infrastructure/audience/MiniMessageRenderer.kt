@@ -16,7 +16,7 @@ class MiniMessageRenderer {
     private val mm = MiniMessage.miniMessage()
 
     fun render(template: String, placeholders: Map<String, String>): Component {
-        val resolvers = placeholders.map { (k, v) -> Placeholder.parsed(k, v) }
+        val resolvers = placeholders.map { (k, v) -> Placeholder.unparsed(k, v) }
         return mm.deserialize(template, TagResolver.resolver(resolvers))
     }
 }

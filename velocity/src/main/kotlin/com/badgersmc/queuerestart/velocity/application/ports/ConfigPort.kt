@@ -21,6 +21,51 @@ data class QueueRestartConfig(
     val sounds: Map<String, SoundCue>,
     val rankLadder: Map<String, Int>,
     val rankDefault: Int,
+    val networkRestart: NetworkRestartConfig = NetworkRestartConfig.disabled(),
+    val schedules: List<ConfiguredRestartSchedule> = emptyList(),
+)
+
+data class NetworkRestartConfig(
+    val enabled: Boolean,
+    val timezone: String,
+    val executorType: String,
+    val panelUrl: String,
+    val apiKey: String,
+    val proxyServerId: String,
+    val serverIds: Map<ServerId, String>,
+    val members: List<ServerId>,
+    val hubServers: List<ServerId>,
+    val announcementPointsSeconds: List<Long>,
+    val finalCountdownSeconds: Int,
+    val transferTimeoutSeconds: Long,
+    val backendHeadStartSeconds: Long,
+    val maintenanceFailureExpirySeconds: Long,
+    val connectTimeoutSeconds: Long,
+    val requestTimeoutSeconds: Long,
+    val maximumRetries: Int,
+    val maxConcurrentActions: Int,
+    val allowInsecureHttp: Boolean,
+) {
+    companion object {
+        fun disabled() = NetworkRestartConfig(
+            false, "America/Indiana/Indianapolis", "DRY_RUN", "", "", "", emptyMap(), emptyList(), emptyList(),
+            listOf(7200, 3600, 1800, 900, 600, 300, 60, 30, 10), 5,
+            10, 3, 60, 5, 10, 2, 4, false,
+        )
+    }
+}
+
+data class ConfiguredRestartSchedule(
+    val name: String,
+    val type: String,
+    val targets: List<ServerId>,
+    val time: String,
+    val days: Set<String>,
+    val warningWindowSeconds: Long,
+    val timezone: String,
+    val reason: String,
+    val silent: Boolean,
+    val enabled: Boolean,
 )
 
 data class DrainConfig(

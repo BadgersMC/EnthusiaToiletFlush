@@ -110,6 +110,7 @@ class VelocityProxyServerBackend(
         private val BASE_PROBES: Set<String> = setOf(
             "queuerestart.bypass.drain",       // REQ-014
             "queuerestart.bypass.checkhacks",  // REQ-043
+            "queuerestart.bypass.maintenance",
             "queuerestart.command.schedrestart",
             "queuerestart.command.admin",
         )

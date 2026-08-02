@@ -4,6 +4,8 @@ import com.badgersmc.queuerestart.velocity.application.ports.AudiencePort
 import com.badgersmc.queuerestart.velocity.application.ports.SoundCue
 import com.badgersmc.queuerestart.velocity.domain.countdown.CountdownSchedule
 import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+import com.badgersmc.queuerestart.velocity.domain.plan.RestartTimes
+import java.time.Duration
 
 /**
  * REQ-003, REQ-004.
@@ -29,12 +31,13 @@ class CountdownBroadcaster(
         val schedule: CountdownSchedule,
         val hub: ServerId,
         var lastFiredSecond: Int? = null,
+        val silent: Boolean = false,
     )
 
     private val active = mutableMapOf<ServerId, Active>()
 
-    fun register(target: ServerId, schedule: CountdownSchedule, hub: ServerId) {
-        active[target] = Active(schedule, hub)
+    fun register(target: ServerId, schedule: CountdownSchedule, hub: ServerId, silent: Boolean = false) {
+        active[target] = Active(schedule, hub, silent = silent)
     }
 
     fun cancel(target: ServerId) {
@@ -47,6 +50,8 @@ class CountdownBroadcaster(
         if (a.lastFiredSecond == mark.secondsRemaining) return
         a.lastFiredSecond = mark.secondsRemaining
 
+        if (a.silent) return
+
         val template = if (mark.isT0) t0Template else messageTemplate
         val placeholders = mapOf(
             "server" to target.value,
@@ -58,9 +63,5 @@ class CountdownBroadcaster(
         onMark(target, mark.secondsRemaining, mark.isT0)
     }
 
-    private fun formatTime(seconds: Int): String = when {
-        seconds == 0 -> "0s"
-        seconds % 60 == 0 -> "${seconds / 60}m"
-        else -> "${seconds}s"
-    }
+    private fun formatTime(seconds: Int): String = RestartTimes.format(Duration.ofSeconds(seconds.toLong()))
 }

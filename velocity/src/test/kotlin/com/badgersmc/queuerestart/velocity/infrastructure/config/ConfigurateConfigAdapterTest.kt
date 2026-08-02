@@ -53,6 +53,30 @@ class ConfigurateConfigAdapterTest {
             server: survival
             cron: "0 4 * * *"
             warn-minutes: 20
+        network-restart:
+          enabled: true
+          executor: DRY_RUN
+          panel-url: https://panel.example.com
+          api-key: ${'$'}{PTERODACTYL_API_KEY}
+          proxy-server-id: proxy1234
+          servers:
+            lobby: lobby1234
+            survival: survival1234
+          full-network:
+            members: [lobby, survival]
+            hub-servers: [lobby]
+          announcement-points-seconds: [7200, 3600, 60, 10]
+        automatic-schedules:
+          nightly:
+            enabled: true
+            type: SERVER
+            targets: [survival]
+            time: "00:00"
+            days: [MONDAY]
+            warning-window: 2h
+            timezone: America/Indiana/Indianapolis
+            reason: Nightly restart
+            silent: false
     """.trimIndent()
 
     private fun yaml(@TempDir dir: Path, content: String): Path {
@@ -77,6 +101,8 @@ class ConfigurateConfigAdapterTest {
         assertThat(cfg.sounds["tick"]!!.volume).isEqualTo(0.7f)
         assertThat(cfg.rankLadder["group.owner"]).isEqualTo(1000)
         assertThat(cfg.rankDefault).isEqualTo(0)
+        assertThat(cfg.networkRestart.members).containsExactly(ServerId("lobby"), ServerId("survival"))
+        assertThat(cfg.schedules.single().name).isEqualTo("nightly")
     }
 
     @Test

@@ -64,7 +64,7 @@ class CountdownBroadcasterTest {
         val msg = audience.broadcasts[0]
         assertThat(msg.server).isEqualTo(target)
         assertThat(msg.placeholders["server"]).isEqualTo("survival")
-        assertThat(msg.placeholders["time"]).isEqualTo("10s")
+        assertThat(msg.placeholders["time"]).isEqualTo("10 seconds")
         assertThat(audience.sounds).containsExactly(RecordingAudience.Sound(target, tick))
     }
 
@@ -144,11 +144,11 @@ class CountdownBroadcasterTest {
         assertThat(audience.broadcasts.map { it.server })
             .containsExactly(target, creative)
         assertThat(audience.broadcasts.map { it.placeholders["time"] })
-            .containsExactly("10s", "30s")
+            .containsExactly("10 seconds", "30 seconds")
     }
 
     @Test
-    fun `time placeholder formats minutes for marks above 60s`() {
+    fun `time placeholder formats human-readable durations`() {
         val audience = RecordingAudience()
         val schedWithMinutes = CountdownSchedule(listOf(60, 120, 300))
         val b = broadcaster(audience)
@@ -159,6 +159,6 @@ class CountdownBroadcasterTest {
         b.tick(target, 60)
 
         val times = audience.broadcasts.map { it.placeholders["time"] }
-        assertThat(times).containsExactly("5m", "2m", "1m")
+        assertThat(times).containsExactly("5 minutes", "2 minutes", "1 minute")
     }
 }
