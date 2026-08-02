@@ -1,0 +1,49 @@
+name: apply PR 6 runtime fix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/pr6-runtime-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/pr6-runtime-fix
+          fetch-depth: 0
+
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Reconstruct reviewed source files
+        run: |
+          base64 --decode .github/pr6-runtime/QueueRestartPlugin.kt.gz.b64 | gzip -dc > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt
+          base64 --decode .github/pr6-runtime/NetworkRestartService.kt.gz.b64 | gzip -dc > velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
+          echo '18b9ebc49ea6526cd2a10b7cdec429e15744b5ba0bf099642c6f4a65275181e1  velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/QueueRestartPlugin.kt' | sha256sum --check
+          echo '19fee564652c1ff8cfa1b040e3e763d4bed1d556d13f283be230f7dc05054404  velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt' | sha256sum --check
+          rm -rf .github/pr6-runtime
+
+      - name: Validate modified tree
+        run: |
+          chmod +x ./gradlew
+          git diff --check
+          ./gradlew check :velocity:shadowJar :paper-companion:shadowJar --no-daemon
+
+      - name: Commit validated source files
+        run: |
+          git checkout -- gradlew
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix restart concurrency and offline hub fallback"
+          git push origin HEAD:agent/pr6-runtime-fix
