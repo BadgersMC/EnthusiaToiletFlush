@@ -44,6 +44,23 @@ jobs:
             ':(exclude).github/workflows/apply-live-ready.yml'
           echo 'source baseline verified'
 
+          wc -c \
+            .github/pr6-runtime/live-ready-final.part00 \
+            .github/pr6-runtime/live-ready-final.part01-02 \
+            .github/pr6-runtime/live-ready-final.part03-04 \
+            .github/pr6-runtime/live-ready-final.part05-06 \
+            .github/pr6-runtime/live-ready-final.part07-08 \
+            .github/pr6-runtime/live-ready-final.part09-10 \
+            .github/pr6-runtime/live-ready-final.part11-12
+          sha256sum \
+            .github/pr6-runtime/live-ready-final.part00 \
+            .github/pr6-runtime/live-ready-final.part01-02 \
+            .github/pr6-runtime/live-ready-final.part03-04 \
+            .github/pr6-runtime/live-ready-final.part05-06 \
+            .github/pr6-runtime/live-ready-final.part07-08 \
+            .github/pr6-runtime/live-ready-final.part09-10 \
+            .github/pr6-runtime/live-ready-final.part11-12
+
           cat \
             .github/pr6-runtime/live-ready-final.part00 \
             .github/pr6-runtime/live-ready-final.part01-02 \
