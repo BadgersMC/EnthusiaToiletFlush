@@ -39,6 +39,16 @@ jobs:
           path.write_text(source)
           PY
           python /tmp/patch.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapterTest.kt')
+          source = path.read_text()
+          source = source.replace(
+              '.replace("message: "<gold>warning"", "message: "<aqua>reloaded"")',
+              '.replace("message: \\"<gold>warning\\"", "message: \\"<aqua>reloaded\\"")',
+          )
+          path.write_text(source)
+          PY
           rm -f /tmp/patch.py
           rm -rf .github/pr6-runtime
           rm -f .github/workflows/apply-pr6-countdown-fix.yml
