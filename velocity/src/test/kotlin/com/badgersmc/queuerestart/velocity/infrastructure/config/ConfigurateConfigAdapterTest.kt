@@ -45,9 +45,19 @@ class ConfigurateConfigAdapterTest {
           message: "<gold>warning"
           message-t0: "<red>now"
           cancel-message: "<green>cancelled"
+        access-messages:
+          backend-restarting: "<red><server> restart"
+          backend-whitelisted: "<yellow><server> whitelist"
+          drain-disconnect: "<red><server> disconnected"
+          network-maintenance: "<red>network maintenance"
         sounds:
-          warn:  { key: block.note_block.bell, volume: 0.4, pitch: 1.0 }
-          tick:  { key: ui.button.click,       volume: 0.7, pitch: 1.0 }
+          warn:  { key: minecraft:block.note_block.bell, volume: 0.4, pitch: 1.0 }
+          tick:  { key: minecraft:ui.button.click,       volume: 0.7, pitch: 1.0 }
+        control-security:
+          secret: 0123456789abcdef0123456789abcdef
+          heartbeat-timeout-seconds: 20
+          maximum-clock-skew-seconds: 45
+          backend-execution-timeout-seconds: 600
         schedules:
           nightly:
             server: survival
@@ -94,15 +104,32 @@ class ConfigurateConfigAdapterTest {
         assertThat(cfg.hubServer).isEqualTo(ServerId("lobby"))
         assertThat(cfg.fallbackHubs).containsExactly(ServerId("lobby2"), ServerId("lobby3"))
         assertThat(cfg.drain.batchSize).isEqualTo(10)
+        assertThat(cfg.drain.drainLeadSeconds).isZero()
         assertThat(cfg.drain.drainOrder).isEqualTo(DrainOrder.PRIORITY_ASC)
         assertThat(cfg.rejoin.checkGateTimeoutSeconds).isEqualTo(60)
         assertThat(cfg.countdown.marksSeconds).containsExactly(60, 30, 10, 5, 1)
+        assertThat(cfg.accessMessages.backendRestarting).contains("<server>").contains("restart")
+        assertThat(cfg.accessMessages.backendWhitelisted).contains("whitelist")
         assertThat(cfg.sounds).containsKey("warn").containsKey("tick")
         assertThat(cfg.sounds["tick"]!!.volume).isEqualTo(0.7f)
         assertThat(cfg.rankLadder["group.owner"]).isEqualTo(1000)
         assertThat(cfg.rankDefault).isEqualTo(0)
         assertThat(cfg.networkRestart.members).containsExactly(ServerId("lobby"), ServerId("survival"))
         assertThat(cfg.schedules.single().name).isEqualTo("nightly")
+    }
+
+    @Test
+    fun `missing access messages use safe defaults`(@TempDir dir: Path) {
+        val withoutMessages = canonical.replace(
+            Regex("(?m)^access-messages:\n(?:  .+\n){4}"),
+            "",
+        )
+
+        val cfg = ConfigurateConfigAdapter(yaml(dir, withoutMessages), warner = {}).snapshot()
+
+        assertThat(cfg.accessMessages.backendRestarting).contains("<server>")
+        assertThat(cfg.accessMessages.backendWhitelisted.lowercase()).contains("whitelist")
+        assertThat(cfg.accessMessages.networkMaintenance).contains("Network restart")
     }
 
     @Test
@@ -144,6 +171,25 @@ class ConfigurateConfigAdapterTest {
     }
 
     @Test
+    fun `short control secret is rejected before services start`(@TempDir dir: Path) {
+        val bad = canonical.replace(
+            "secret: 0123456789abcdef0123456789abcdef",
+            "secret: too-short",
+        )
+        assertThatThrownBy { ConfigurateConfigAdapter(yaml(dir, bad), warner = {}).snapshot() }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("control secret")
+    }
+
+    @Test
+    fun `root message validation rejects NUL content`(@TempDir dir: Path) {
+        val bad = canonical.replace("<gold>warning", "<gold>bad\u0000message")
+        assertThatThrownBy { ConfigurateConfigAdapter(yaml(dir, bad), warner = {}).snapshot() }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("NUL")
+    }
+
+    @Test
     fun `reload reparses the file`(@TempDir dir: Path) {
         val file = yaml(dir, canonical)
         val adapter = ConfigurateConfigAdapter(file, warner = {})
@@ -155,4 +201,73 @@ class ConfigurateConfigAdapterTest {
 
         assertThat(adapter.snapshot().hubServer).isEqualTo(ServerId("hub2"))
     }
+
+    @Test
+    fun `successful reload updates active countdown message and sound`(@TempDir dir: Path) {
+        val file = yaml(dir, canonical)
+        val adapter = ConfigurateConfigAdapter(file, warner = {})
+        val audience = object : com.badgersmc.queuerestart.velocity.application.ports.AudiencePort {
+            val messages = mutableListOf<String>()
+            val sounds = mutableListOf<com.badgersmc.queuerestart.velocity.application.ports.SoundCue>()
+            override fun broadcast(
+                target: ServerId,
+                miniMessage: String,
+                placeholders: Map<String, String>,
+            ) { messages += miniMessage }
+            override fun disconnect(
+                playerId: com.badgersmc.queuerestart.velocity.domain.id.PlayerId,
+                miniMessage: String,
+                placeholders: Map<String, String>,
+            ) = Unit
+            override fun playSound(
+                target: ServerId,
+                cue: com.badgersmc.queuerestart.velocity.application.ports.SoundCue,
+            ) { sounds += cue }
+        }
+        val broadcaster = com.badgersmc.queuerestart.velocity.application.schedule.CountdownBroadcaster(
+            audience = audience,
+            presentationSupplier = {
+                val cfg = adapter.snapshot()
+                com.badgersmc.queuerestart.velocity.application.schedule.CountdownPresentation(
+                    cfg.countdown.message,
+                    cfg.countdown.messageT0,
+                ) { seconds ->
+                    com.badgersmc.queuerestart.velocity.application.schedule.CountdownSoundPolicy.resolve(
+                        cfg.sounds,
+                        seconds.toLong(),
+                    )
+                }
+            },
+        )
+        val target = ServerId("survival")
+        val schedule = com.badgersmc.queuerestart.velocity.domain.countdown.CountdownSchedule(listOf(10, 5))
+        broadcaster.register(target, schedule, ServerId("lobby"), startingSeconds = 11)
+        broadcaster.tick(target, 10)
+
+        Files.writeString(
+            file,
+            canonical
+                .replace("message: \"<gold>warning\"", "message: \"<aqua>reloaded\"")
+                .replace("key: minecraft:ui.button.click", "key: minecraft:block.note_block.pling"),
+        )
+        adapter.reload()
+        broadcaster.tick(target, 5)
+
+        assertThat(audience.messages).containsExactly("<gold>warning", "<aqua>reloaded")
+        assertThat(audience.sounds.map { it.key }).containsExactly("minecraft:ui.button.click", "minecraft:block.note_block.pling")
+    }
+
+    @Test
+    fun `failed reload preserves last known good presentation`(@TempDir dir: Path) {
+        val file = yaml(dir, canonical)
+        val adapter = ConfigurateConfigAdapter(file, warner = {})
+        Files.writeString(file, canonical.replace("volume: 0.7", "volume: 2.0"))
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(adapter::reload)
+            .isInstanceOf(IllegalArgumentException::class.java)
+
+        assertThat(adapter.snapshot().countdown.message).isEqualTo("<gold>warning")
+        assertThat(adapter.snapshot().sounds["tick"]!!.key).isEqualTo("minecraft:ui.button.click")
+    }
+
 }

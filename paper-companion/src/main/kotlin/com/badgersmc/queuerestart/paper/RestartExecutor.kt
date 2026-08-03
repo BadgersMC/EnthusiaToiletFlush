@@ -1,16 +1,14 @@
 package com.badgersmc.queuerestart.paper
 
 import com.badgersmc.queuerestart.common.protocol.RestartMode
+import java.util.UUID
 
 /**
  * Bukkit-free abstraction over server lifecycle ops. The Paper-bound impl
- * (`BukkitServerControl`) calls `Bukkit.shutdown()`,
- * `Bukkit.dispatchCommand(consoleSender, …)`, and `System.exit(code)`.
+ * (`BukkitServerControl`) calls only `Bukkit.shutdown()`.
  */
 interface ServerControl {
     fun shutdown()
-    fun dispatchConsoleCommand(command: String)
-    fun exitProcess(code: Int)
 }
 
 /** Handle to a scheduled action. `cancel` is idempotent. */
@@ -41,10 +39,9 @@ fun interface RestartScheduler {
  * REQ-021. Executes a `RestartNow` plugin message by dispatching the right
  * action against [ServerControl] after deferring by `delaySeconds`.
  *
- * The deferral closes the gap created by Velocity dropping plugin messages
- * to backends with no players — the proxy ships RestartNow at countdown
- * start (while at least one player is on target) and the companion's local
- * timer fires the actual shutdown later.
+ * Managed restarts normally arrive with `delaySeconds == 0` after Velocity
+ * reaches T-0 and finishes moving or disconnecting players. Non-zero delays
+ * remain supported for protocol compatibility and direct tests.
  *
  * [abort] cancels the pending shutdown, used when the proxy sends a
  * `RestartCancelMessage` (operator ran `/schedrestart cancel`). Without
@@ -54,37 +51,52 @@ fun interface RestartScheduler {
 class RestartExecutor(
     private val control: ServerControl,
     private val scheduler: RestartScheduler = RestartScheduler.IMMEDIATE,
+    private val processedDeliveries: ProcessedDeliveryStore = ProcessedDeliveryStore(),
 ) {
 
     @Volatile
     private var pending: ScheduledHandle? = null
 
-    fun execute(mode: RestartMode, argument: String, delaySeconds: Int) {
+    @Synchronized
+    fun execute(deliveryId: UUID, mode: RestartMode, argument: String, delaySeconds: Int): Boolean {
         require(delaySeconds >= 0) { "delaySeconds must be ≥ 0; got $delaySeconds" }
-        // Replace any prior pending shutdown so a re-arm at a different
-        // delay doesn't leave two shutdown tasks racing.
-        pending?.cancel()
-        pending = scheduler.runAfterSeconds(delaySeconds) {
-            pending = null
-            when (mode) {
-                RestartMode.SHUTDOWN -> control.shutdown()
-                RestartMode.COMMAND -> control.dispatchConsoleCommand(argument)
-                RestartMode.EXIT_CODE -> {
-                    val code = argument.toIntOrNull()
-                        ?: throw IllegalArgumentException(
-                            "EXIT_CODE mode requires a numeric argument; got '$argument'",
-                        )
-                    control.exitProcess(code)
+        require(mode == RestartMode.SHUTDOWN) { "only SHUTDOWN restart delivery is supported" }
+        require(argument.isEmpty()) { "SHUTDOWN restart delivery must not contain an argument" }
+        if (!processedDeliveries.markIfNew(deliveryId)) return false
+        try {
+            // Replace any prior pending shutdown so a re-arm at a different
+            // delay doesn't leave two shutdown tasks racing.
+            pending?.cancel()
+            var completedSynchronously = false
+            val handle = scheduler.runAfterSeconds(delaySeconds) {
+                synchronized(this) {
+                    completedSynchronously = true
+                    pending = null
                 }
+                control.shutdown()
             }
+            // A test/in-process scheduler may execute the callback before
+            // runAfterSeconds returns. Do not resurrect that completed task as
+            // a cancellable pending shutdown after the callback cleared it.
+            pending = if (completedSynchronously) null else handle
+        } catch (error: Throwable) {
+            runCatching { processedDeliveries.remove(deliveryId) }
+                .onFailure(error::addSuppressed)
+            throw error
         }
+        return true
     }
 
-    /** Cancel the pending shutdown if one is scheduled. Idempotent. */
-    fun abort(): Boolean {
-        val handle = pending ?: return false
-        handle.cancel()
+    /**
+     * Durably consumes a cancellation delivery before aborting the current task.
+     * This makes captured signed cancellation frames idempotent across plugin/JVM restarts.
+     */
+    @Synchronized
+    fun abort(deliveryId: UUID): Boolean {
+        if (!processedDeliveries.markIfNew(deliveryId)) return false
+        val handle = pending
+        handle?.cancel()
         pending = null
-        return true
+        return handle != null
     }
 }

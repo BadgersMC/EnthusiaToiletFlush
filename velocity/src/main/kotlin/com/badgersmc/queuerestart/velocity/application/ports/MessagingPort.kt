@@ -4,6 +4,7 @@ import com.badgersmc.queuerestart.common.protocol.CheckOutcome
 import com.badgersmc.queuerestart.common.protocol.RestartMode
 import com.badgersmc.queuerestart.velocity.domain.id.PlayerId
 import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+import java.util.UUID
 
 /**
  * Outbound port — sends plugin messages on channel `qrestart:v1` and
@@ -15,12 +16,12 @@ interface MessagingPort {
     fun sendDrainRequest(target: ServerId)
 
     /**
-     * Send `RestartNow` (0x10) to the named backend. The companion will
-     * defer the actual shutdown by [delaySeconds] from receipt — sending
-     * early (while a player is still on the target) is required because
-     * Velocity drops plugin messages when no player is connected.
+     * Send `RestartNow` (0x10) to the named backend. For managed backend
+     * restarts this is sent with a zero delay only after the T-0 drain has
+     * completed. The independent SLP poll-back channel supplies the same
+     * immediate arm when no player remains to carry a plugin message.
      */
-    fun sendRestartNow(target: ServerId, mode: RestartMode, argument: String, delaySeconds: Int)
+    fun sendRestartNow(target: ServerId, deliveryId: UUID, mode: RestartMode, argument: String, delaySeconds: Int)
 
     /**
      * Abort a previously sent `RestartNow` that the companion already
@@ -28,7 +29,7 @@ interface MessagingPort {
      * doesn't still result in `Bukkit.shutdown()` after the delay
      * elapses. Idempotent.
      */
-    fun sendRestartCancel(target: ServerId)
+    fun sendRestartCancel(target: ServerId, deliveryId: UUID)
 
     /** Register a handler for `DrainAck` (0x02) from any backend. */
     fun onDrainAck(handler: (ServerId, Int) -> Unit)

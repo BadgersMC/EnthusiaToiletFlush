@@ -44,6 +44,7 @@ class RestartOrchestratorTest {
         var reachable: MutableSet<ServerId> = mutableSetOf(),
         val perms: MutableMap<PlayerId, Set<String>> = mutableMapOf(),
         val transfers: MutableList<Pair<PlayerId, ServerId>> = mutableListOf(),
+        var transferSucceeds: Boolean = true,
     ) : ProxyPort {
         override fun isOnline(playerId: PlayerId) = true
         override fun permissionsOf(playerId: PlayerId) = perms[playerId] ?: emptySet()
@@ -51,24 +52,24 @@ class RestartOrchestratorTest {
         override fun playersOn(serverId: ServerId) = playersOnTarget.toSet()
         override fun transferPlayer(playerId: PlayerId, target: ServerId) {
             transfers += playerId to target
-            playersOnTarget.remove(playerId)
+            if (transferSucceeds) playersOnTarget.remove(playerId)
         }
         override fun registeredServerIds(): Set<ServerId> = reachable.toSet()
         override fun pingForSchedule(serverId: ServerId): com.badgersmc.queuerestart.common.schedule.BackendSchedule? = null
     }
 
     private class FakeMessaging : MessagingPort {
-        data class RestartCall(val server: ServerId, val mode: RestartMode, val arg: String, val delaySeconds: Int)
+        data class RestartCall(val server: ServerId, val deliveryId: UUID, val mode: RestartMode, val arg: String, val delaySeconds: Int)
         val drainSent = mutableListOf<ServerId>()
         val restartSent = mutableListOf<RestartCall>()
         val cancelSent = mutableListOf<ServerId>()
         var checkResultHandler: ((ServerId, PlayerId, CheckOutcome) -> Unit)? = null
         var drainAckHandler: ((ServerId, Int) -> Unit)? = null
         override fun sendDrainRequest(target: ServerId) { drainSent += target }
-        override fun sendRestartNow(target: ServerId, mode: RestartMode, argument: String, delaySeconds: Int) {
-            restartSent += RestartCall(target, mode, argument, delaySeconds)
+        override fun sendRestartNow(target: ServerId, deliveryId: UUID, mode: RestartMode, argument: String, delaySeconds: Int) {
+            restartSent += RestartCall(target, deliveryId, mode, argument, delaySeconds)
         }
-        override fun sendRestartCancel(target: ServerId) { cancelSent += target }
+        override fun sendRestartCancel(target: ServerId, deliveryId: UUID) { cancelSent += target }
         override fun onDrainAck(handler: (ServerId, Int) -> Unit) { drainAckHandler = handler }
         override fun onCheckHacksResult(handler: (ServerId, PlayerId, CheckOutcome) -> Unit) {
             checkResultHandler = handler
@@ -76,9 +77,20 @@ class RestartOrchestratorTest {
     }
 
     private class FakeAudience : AudiencePort {
+        data class DisconnectCall(
+            val playerId: PlayerId,
+            val message: String,
+            val placeholders: Map<String, String>,
+        )
         val broadcasts = mutableListOf<String>()
+        val disconnects = mutableListOf<DisconnectCall>()
+        var onDisconnect: (PlayerId) -> Unit = {}
         override fun broadcast(target: ServerId, miniMessage: String, placeholders: Map<String, String>) {
             broadcasts += miniMessage
+        }
+        override fun disconnect(playerId: PlayerId, miniMessage: String, placeholders: Map<String, String>) {
+            disconnects += DisconnectCall(playerId, miniMessage, placeholders)
+            onDisconnect(playerId)
         }
         override fun playSound(target: ServerId, cue: SoundCue) {}
     }
@@ -112,6 +124,7 @@ class RestartOrchestratorTest {
         pendingArmStore: com.badgersmc.queuerestart.velocity.application.arm.PendingArmStore =
             com.badgersmc.queuerestart.velocity.application.arm.PendingArmStore(),
     ): Pair<RestartOrchestrator, Bundle> {
+        audience.onDisconnect = { proxy.playersOnTarget.remove(it) }
         val registry = CoordinatorRegistry()
         val broadcaster = CountdownBroadcaster(
             audience = audience,
@@ -121,6 +134,8 @@ class RestartOrchestratorTest {
         )
         val gate = CheckGate(timeoutSeconds = 60, releaseOnTimeout = true)
         val rejoin = RejoinService(proxy, FakeQueue(), RankLadder(emptyMap(), 0), gate)
+        val baselineBootId = UUID.randomUUID()
+        val published = mutableListOf<Pair<ServerId, UUID>>()
         val orch = RestartOrchestrator(
             registry = registry,
             proxy = proxy,
@@ -136,9 +151,14 @@ class RestartOrchestratorTest {
             restartMode = RestartMode.SHUTDOWN,
             restartArg = "",
             pendingArmStore = pendingArmStore,
+            companionIdentity = { baselineBootId },
+            onRestartPublished = { target, baseline ->
+                published += target to baseline
+                true
+            },
         )
         orch.start()
-        return orch to Bundle(registry, proxy, messaging, audience, gate, pendingArmStore)
+        return orch to Bundle(registry, proxy, messaging, audience, gate, pendingArmStore, baselineBootId, published)
     }
 
     private data class Bundle(
@@ -148,70 +168,64 @@ class RestartOrchestratorTest {
         val audience: FakeAudience,
         val gate: CheckGate,
         val pendingArmStore: com.badgersmc.queuerestart.velocity.application.arm.PendingArmStore,
+        val baselineBootId: UUID,
+        val published: MutableList<Pair<ServerId, UUID>>,
     )
 
     private fun cohort(vararg names: String) = Cohort(names.map { CohortMember(pid(it)) }.toSet())
 
     @Test
-    fun `armed tick publishes pending arm to store for SLP poll-back (REQ-022)`() {
+    fun `armed tick does not schedule backend shutdown before T-0`() {
         val (orch, b) = setup()
         b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
 
         val now = Instant.parse("2026-01-01T00:00:00Z")
         orch.tick(now)
-
-        assertThat(b.pendingArmStore.peek(survival, now = now))
-            .isEqualTo(com.badgersmc.queuerestart.common.schedule.PendingArm(60, RestartMode.SHUTDOWN, ""))
-    }
-
-    @Test
-    fun `cancel replaces the pending arm with a poll-back tombstone (REQ-022)`() {
-        val (orch, b) = setup()
-        b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
-        val now = Instant.parse("2026-01-01T00:00:00Z")
-        orch.tick(now)
-        assertThat(b.pendingArmStore.peek(survival, now = now)).isNotNull
-
-        orch.cancel(survival, now)
 
         assertThat(b.pendingArmStore.peek(survival, now = now)).isNull()
-        assertThat(b.pendingArmStore.consumeDelivery(survival, now = now))
-            .isEqualTo(com.badgersmc.queuerestart.velocity.application.arm.PendingArmStore.Delivery.Cancel)
-        assertThat(b.messaging.cancelSent).containsExactly(survival)
-    }
-
-    @Test
-    fun `tick advances ARMED to COUNTDOWN and registers broadcaster`() {
-        val (orch, b) = setup()
-        b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
-
-        val now = Instant.parse("2026-01-01T00:00:00Z")
-        orch.tick(now)
-
+        assertThat(b.messaging.restartSent).isEmpty()
         assertThat(b.registry.get(survival).state).isEqualTo(RestartState.COUNTDOWN)
     }
 
     @Test
-    fun `COUNTDOWN tick fires broadcaster at marks`() {
+    fun `cancel before T-0 clears unpublished delivery without transport cancellation`() {
         val (orch, b) = setup()
+        b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
+        val now = Instant.parse("2026-01-01T00:00:00Z")
+        orch.tick(now)
+
+        orch.cancel(survival, now)
+
+        assertThat(b.pendingArmStore.peek(survival, now = now)).isNull()
+        assertThat(b.pendingArmStore.peekDelivery(survival, now = now)).isNull()
+        assertThat(b.messaging.cancelSent).isEmpty()
+    }
+
+    @Test
+    fun `COUNTDOWN tick fires broadcaster at marks without draining early`() {
+        val proxy = FakeProxy(
+            playersOnTarget = mutableSetOf(pid("alice")),
+            reachable = mutableSetOf(hub),
+        )
+        val (orch, b) = setup(cfg = config(drainLead = 30), proxy = proxy)
         b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
-        orch.tick(t0) // ARMED→COUNTDOWN, broadcaster registered, secondsRemaining=60 broadcast
-        assertThat(b.audience.broadcasts).hasSize(1) // 60s mark
+        orch.tick(t0)
+        assertThat(b.audience.broadcasts).hasSize(1)
 
-        orch.tick(t0.plusSeconds(30)) // secondsRemaining=30 → mark
+        orch.tick(t0.plusSeconds(30))
         assertThat(b.audience.broadcasts).hasSize(2)
+        assertThat(proxy.transfers).isEmpty()
+        assertThat(b.messaging.restartSent).isEmpty()
+        assertThat(b.registry.get(survival).state).isEqualTo(RestartState.COUNTDOWN)
 
-        orch.tick(t0.plusSeconds(31)) // secondsRemaining=29 → not a mark
+        orch.tick(t0.plusSeconds(31))
         assertThat(b.audience.broadcasts).hasSize(2)
     }
 
     @Test
-    fun `COUNTDOWN transitions to DRAINING at drain-lead-seconds (REQ-010)`() {
-        // alice + lurker are on the target. lurker holds the drain-bypass
-        // permission so drain leaves them behind — DRAINING doesn't
-        // collapse straight to RESTART_SENT.
+    fun `COUNTDOWN begins draining exactly at T-0 regardless of legacy drain lead`() {
         val proxy = FakeProxy(
             playersOnTarget = mutableSetOf(pid("alice"), pid("lurker")),
             reachable = mutableSetOf(hub),
@@ -221,15 +235,22 @@ class RestartOrchestratorTest {
         b.registry.get(survival).arm(cohort("alice"), durationSeconds = 60)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
-        orch.tick(t0) // ARMED→COUNTDOWN
+        orch.tick(t0)
+        assertThat(orch.prepareRestartHandoff(survival, b.baselineBootId)).isTrue()
+        orch.tick(t0.plusSeconds(59))
         assertThat(b.registry.get(survival).state).isEqualTo(RestartState.COUNTDOWN)
+        assertThat(proxy.transfers).isEmpty()
 
-        orch.tick(t0.plusSeconds(30)) // secondsRemaining=30 ≤ drainLead → DRAINING
+        orch.tick(t0.plusSeconds(60))
         assertThat(b.registry.get(survival).state).isEqualTo(RestartState.DRAINING)
+        assertThat(proxy.transfers.map { it.first }).containsExactly(pid("alice"))
+
+        orch.tick(t0.plusSeconds(62))
+        assertThat(b.audience.disconnects.map { it.playerId }).containsExactly(pid("lurker"))
     }
 
     @Test
-    fun `DRAINING transfers batches of players to the hub`() {
+    fun `T-0 drain transfers players in configured batches`() {
         val proxy = FakeProxy(
             playersOnTarget = mutableSetOf(pid("a"), pid("b"), pid("c")),
             reachable = mutableSetOf(hub),
@@ -238,62 +259,91 @@ class RestartOrchestratorTest {
         b.registry.get(survival).arm(cohort("a", "b", "c"), durationSeconds = 60)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
-        orch.tick(t0) // ARMED→COUNTDOWN
-        orch.tick(t0.plusSeconds(30)) // COUNTDOWN→DRAINING + first batch (2 players)
+        orch.tick(t0)
+        assertThat(orch.prepareRestartHandoff(survival, b.baselineBootId)).isTrue()
+        orch.tick(t0.plusSeconds(60))
 
         assertThat(proxy.transfers).hasSize(2)
         assertThat(proxy.transfers.map { it.second }).allMatch { it == hub }
+        assertThat(b.messaging.restartSent).isEmpty()
     }
 
     @Test
-    fun `DRAINING sends RestartNow when target is empty (REQ-020)`() {
+    fun `empty target receives immediate restart only after T-0`() {
         val proxy = FakeProxy(reachable = mutableSetOf(hub))
         val (orch, b) = setup(cfg = config(drainLead = 30), proxy = proxy)
         b.registry.get(survival).arm(Cohort(emptySet()), durationSeconds = 60)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
         orch.tick(t0)
-        orch.tick(t0.plusSeconds(30)) // → DRAINING, no players → restart immediately
+        assertThat(orch.prepareRestartHandoff(survival, b.baselineBootId)).isTrue()
+        assertThat(b.messaging.restartSent).isEmpty()
 
-        assertThat(b.messaging.restartSent).hasSize(1)
-        assertThat(b.messaging.restartSent[0].server).isEqualTo(survival)
+        val restartAt = t0.plusSeconds(60)
+        orch.tick(restartAt)
+
+        val restart = b.messaging.restartSent.single()
+        assertThat(restart.server).isEqualTo(survival)
+        assertThat(restart.delaySeconds).isZero()
+        val pending = b.pendingArmStore.peek(survival, restartAt)
+        assertThat(pending?.deliveryId).isEqualTo(restart.deliveryId)
+        assertThat(pending?.delaySeconds).isZero()
+        assertThat(pending?.mode).isEqualTo(RestartMode.SHUTDOWN)
+        assertThat(b.registry.get(survival).state).isEqualTo(RestartState.RESTART_SENT)
+        assertThat(b.published).containsExactly(survival to b.baselineBootId)
+    }
+
+    @Test
+    fun `failed transfers use custom disconnect after one settle interval then restart`() {
+        val proxy = FakeProxy(
+            playersOnTarget = mutableSetOf(pid("stuck")),
+            reachable = mutableSetOf(hub),
+            transferSucceeds = false,
+        )
+        val (orch, b) = setup(cfg = config(batchInterval = 40), proxy = proxy)
+        b.registry.get(survival).arm(cohort("stuck"), durationSeconds = 10)
+
+        val t0 = Instant.parse("2026-01-01T00:00:00Z")
+        orch.tick(t0)
+        assertThat(orch.prepareRestartHandoff(survival, b.baselineBootId)).isTrue()
+        orch.tick(t0.plusSeconds(10))
+        assertThat(b.audience.disconnects).isEmpty()
+
+        orch.tick(t0.plusSeconds(11))
+        assertThat(b.audience.disconnects).isEmpty()
+
+        orch.tick(t0.plusSeconds(12))
+        val disconnect = b.audience.disconnects.single()
+        assertThat(disconnect.playerId).isEqualTo(pid("stuck"))
+        assertThat(disconnect.message).contains("restarting")
+        assertThat(disconnect.placeholders["server"]).isEqualTo("survival")
+
+        orch.tick(t0.plusSeconds(13))
+        assertThat(b.messaging.restartSent.single().delaySeconds).isZero()
         assertThat(b.registry.get(survival).state).isEqualTo(RestartState.RESTART_SENT)
     }
 
     @Test
-    fun `DRAINING force-timeout fires RestartNow even with players still present (REQ-012)`() {
+    fun `force timeout disconnects remaining players before immediate restart`() {
         val proxy = FakeProxy(
             playersOnTarget = mutableSetOf(pid("stuck")),
             reachable = mutableSetOf(hub),
+            transferSucceeds = false,
         )
-        // Keep stuck player on the target by intercepting transfer
-        val noTransferProxy = object : ProxyPort by proxy {
-            override fun transferPlayer(playerId: PlayerId, target: ServerId) {
-                // simulate failed transfer — player stays
-            }
-        }
         val (orch, b) = setup(
-            cfg = config(drainLead = 30, forceTimeout = 60),
-            proxy = FakeProxy(
-                playersOnTarget = mutableSetOf(pid("stuck")),
-                reachable = mutableSetOf(hub),
-            ).also { it.transfers.clear() },
+            cfg = config(forceTimeout = 60, batchInterval = 4_000),
+            proxy = proxy,
         )
-        // Manually keep player on target
-        b.proxy.playersOnTarget.add(pid("stuck"))
-        b.registry.get(survival).arm(cohort("stuck"), durationSeconds = 60)
+        b.registry.get(survival).arm(cohort("stuck"), durationSeconds = 10)
 
         val t0 = Instant.parse("2026-01-01T00:00:00Z")
-        orch.tick(t0)              // → COUNTDOWN
-        orch.tick(t0.plusSeconds(30)) // → DRAINING + dispatch batch (player removed)
+        orch.tick(t0)
+        assertThat(orch.prepareRestartHandoff(survival, b.baselineBootId)).isTrue()
+        orch.tick(t0.plusSeconds(10))
+        orch.tick(t0.plusSeconds(70))
 
-        // Re-add the stuck player to simulate no-transfer
-        b.proxy.playersOnTarget.add(pid("stuck"))
-
-        // 60 seconds after drain start → force timeout
-        orch.tick(t0.plusSeconds(30 + 60))
-
-        assertThat(b.messaging.restartSent).hasSize(1)
+        assertThat(b.audience.disconnects.map { it.playerId }).containsExactly(pid("stuck"))
+        assertThat(b.messaging.restartSent.single().delaySeconds).isZero()
         assertThat(b.registry.get(survival).state).isEqualTo(RestartState.RESTART_SENT)
     }
 
@@ -342,4 +392,30 @@ class RestartOrchestratorTest {
 
         assertThat(b.gate.isPending(pid("alice"))).isFalse()
     }
+
+    @Test
+    fun `persisted server cancellation before coordinator arm announces once`() {
+        val (orch, b) = setup()
+
+        orch.cancelPlan(survival, silent = false)
+        orch.cancelPlan(survival, silent = true)
+
+        assertThat(b.audience.broadcasts.count { it.contains("cancel") }).isEqualTo(1)
+        assertThat(b.messaging.cancelSent).isEmpty()
+    }
+
+    @Test
+    fun `direct cancellation remains idempotent and announces once`() {
+        val (orch, b) = setup()
+        b.registry.get(survival).arm(cohort("a"), durationSeconds = 60)
+        val now = Instant.parse("2026-01-01T00:00:00Z")
+        orch.tick(now)
+
+        orch.cancel(survival, now)
+        orch.cancel(survival, now)
+
+        assertThat(b.audience.broadcasts.count { it.contains("cancel") }).isEqualTo(1)
+        assertThat(b.messaging.cancelSent).isEmpty()
+    }
+
 }

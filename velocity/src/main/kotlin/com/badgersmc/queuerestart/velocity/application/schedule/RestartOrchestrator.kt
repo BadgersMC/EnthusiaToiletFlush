@@ -19,6 +19,8 @@ import com.badgersmc.queuerestart.velocity.domain.id.ServerId
 import com.badgersmc.queuerestart.velocity.domain.rank.RankLadder
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * REQ-001, REQ-010, REQ-012, REQ-020, REQ-040.
@@ -45,12 +47,14 @@ class RestartOrchestrator(
     private val hubResolver: HubResolver,
     private val rejoin: RejoinService,
     private val gate: CheckGate,
-    @Suppress("unused") private val rankLadder: RankLadder,
+    private val rankLadder: RankLadder,
     private val configSupplier: () -> QueueRestartConfig,
     private val restartMode: RestartMode = RestartMode.SHUTDOWN,
     private val restartArg: String = "",
     private val pendingArmStore: PendingArmStore = PendingArmStore(),
     private val options: BackendRestartOptions = BackendRestartOptions(),
+    private val companionIdentity: (ServerId) -> UUID? = { null },
+    private val onRestartPublished: (ServerId, UUID) -> Boolean = { _, _ -> true },
 ) {
 
     private data class TargetState(
@@ -58,9 +62,12 @@ class RestartOrchestrator(
         var drainStartedAt: Instant? = null,
         var pendingBatches: ArrayDeque<List<PlayerId>> = ArrayDeque(),
         var nextBatchAt: Instant? = null,
+        var fallbackDisconnectIssued: Boolean = false,
+        var restartDeliveryId: UUID? = null,
+        var preparedBaselineBootId: UUID? = null,
     )
 
-    private val state = mutableMapOf<ServerId, TargetState>()
+    private val state = ConcurrentHashMap<ServerId, TargetState>()
 
     /** Wires the inbound subscriptions on [MessagingPort]. Call once. */
     fun start() {
@@ -74,6 +81,7 @@ class RestartOrchestrator(
     }
 
     /** Drive every coordinator forward. Caller supplies wall time. */
+    @Synchronized
     fun tick(now: Instant) {
         val cfg = configSupplier()
         for ((target, coord) in registry.all()) {
@@ -87,27 +95,47 @@ class RestartOrchestrator(
         }
     }
 
-    /** REQ-005. Cancels the countdown for [target] and broadcasts the cancel message. */
+    /** REQ-005. Direct legacy cancellation; inactive targets remain a no-op. */
+    @Suppress("UNUSED_PARAMETER")
+    @Synchronized
     fun cancel(target: ServerId, now: Instant = Instant.now()) {
-        val coord = registry.all()[target] ?: return
-        if (coord.state != RestartState.ARMED && coord.state != RestartState.COUNTDOWN) return
-        val cfg = configSupplier()
-        coord.cancel()
+        cancelInternal(
+            target = target,
+            silent = options.isSilent(target),
+            announceWhenInactive = false,
+        )
+    }
+
+    /**
+     * Cancellation owner for persisted server plans. It also covers plans
+     * cancelled before the ephemeral coordinator has been armed.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    @Synchronized
+    fun cancelPlan(target: ServerId, silent: Boolean, now: Instant = Instant.now()) {
+        cancelInternal(target, silent, announceWhenInactive = true)
+    }
+
+    private fun cancelInternal(
+        target: ServerId,
+        silent: Boolean,
+        announceWhenInactive: Boolean,
+    ) {
+        val coord = registry.get(target)
+        val active = coord.state == RestartState.ARMED || coord.state == RestartState.COUNTDOWN
+        if (!active && !announceWhenInactive) return
+        if (active) coord.cancel()
         broadcaster.cancel(target)
-        if (!options.isSilent(target)) {
+        if (!silent) {
+            val cfg = configSupplier()
             audience.broadcast(target, cfg.countdown.cancelMessage, mapOf("server" to target.value))
         }
         options.clear(target)
         state.remove(target)
-        // Publish a tombstone through the player-independent SLP path as
-        // well as plugin messaging. A companion may already have consumed
-        // the arm while no player is available to carry a plugin message.
-        pendingArmStore.cancel(target, now)
-        // Tell the companion to abort the Bukkit.shutdown() it scheduled
-        // when RestartNow arrived. Without this the proxy-side cancel is
-        // cosmetic and the backend still shuts down on the original
-        // delay.
-        messaging.sendRestartCancel(target)
+        // The backend is not armed before T-0. A cancellable plan therefore
+        // has no shutdown task to revoke; clearing an unpublished local arm is
+        // sufficient and avoids cancel/restart transport reordering races.
+        pendingArmStore.clear(target)
     }
 
     private fun tickArmed(
@@ -123,24 +151,17 @@ class RestartOrchestrator(
             CountdownSchedule(cfg.countdown.marksSeconds),
             cfg.hubServer,
             options.isSilent(target),
+            startingSeconds = durationSeconds,
         )
         s.countdownStartedAt = now
         coord.beginCountdown()
-        // Belt + braces delivery: send RestartNow on the plugin-message
-        // channel (REQ-020) AND publish to the SLP poll-back store (REQ-022).
-        // Plugin messages need a player on the target backend; the SLP
-        // path doesn't, so a console-arm with no players still reaches
-        // the companion within one poll interval.
-        messaging.sendRestartNow(target, restartMode, restartArg, delaySeconds = durationSeconds)
-        pendingArmStore.put(
-            target,
-            PendingArm(durationSeconds, restartMode, restartArg),
-            now = now,
-        )
-        // Fire the very first mark immediately if the duration matches a mark
+        // The backend is deliberately NOT armed here. The proxy owns the
+        // countdown, starts draining at T-0, and only sends an immediate
+        // shutdown after every transferable player has left the target.
+        // This prevents players being moved to the hub tens of seconds
+        // before the visible timer reaches zero.
         broadcaster.tick(target, durationSeconds)
-        // If duration ≤ drain-lead (degenerate case), drop straight to drain
-        if (durationSeconds <= cfg.drain.drainLeadSeconds) {
+        if (durationSeconds == 0) {
             coord.beginDrain()
             startDrain(target, cfg, s, now)
         }
@@ -158,7 +179,7 @@ class RestartOrchestrator(
         val elapsed = Duration.between(started, now).seconds.toInt()
         val remaining = (durationSeconds - elapsed).coerceAtLeast(0)
         broadcaster.tick(target, remaining)
-        if (remaining <= cfg.drain.drainLeadSeconds) {
+        if (remaining == 0) {
             coord.beginDrain()
             startDrain(target, cfg, s, now)
         }
@@ -173,7 +194,7 @@ class RestartOrchestrator(
             val perms = proxy.permissionsOf(playerId)
             DrainCandidate(
                 playerId = playerId,
-                weight = 0, // ordering only, not queue weight
+                weight = rankLadder.resolve(perms),
                 bypassDrain = "queuerestart.bypass.drain" in perms,
             )
         }
@@ -181,26 +202,50 @@ class RestartOrchestrator(
         s.pendingBatches = ArrayDeque(batches)
         s.nextBatchAt = now
         // Dispatch first batch immediately so single-tick tests see progress
-        dispatchDueBatches(target, cfg, s, now)
-        // If the target is already empty (no players, empty cohort) skip straight to RESTART_SENT
+        dispatchDueBatches(cfg, s, now)
+        // If the target is already empty, dispatch the immediate shutdown now.
         if (proxy.playersOn(target).isEmpty()) {
-            sendRestart(target)
+            sendRestart(target, s, now)
         }
     }
 
     private fun tickDraining(target: ServerId, cfg: QueueRestartConfig, s: TargetState, now: Instant) {
-        dispatchDueBatches(target, cfg, s, now)
+        dispatchDueBatches(cfg, s, now)
+
+        val remaining = proxy.playersOn(target)
+        if (remaining.isEmpty()) {
+            sendRestart(target, s, now)
+            return
+        }
 
         val started = s.drainStartedAt ?: now
         val elapsed = Duration.between(started, now).seconds
-        val empty = proxy.playersOn(target).isEmpty()
         val timedOut = elapsed >= cfg.drain.forceDrainTimeoutSeconds
-        if (empty || timedOut) {
-            sendRestart(target)
+        val transferSettled = s.pendingBatches.isEmpty() &&
+            s.nextBatchAt?.let { !now.isBefore(it) } == true
+
+        // Once every transfer batch has had one full batch interval to settle,
+        // disconnect only the players who are still stuck on the backend.
+        // This covers a failed hub transfer and drain-bypass holders without
+        // kicking players who are successfully moving between servers.
+        if ((transferSettled || timedOut) && !s.fallbackDisconnectIssued) {
+            remaining.forEach { playerId ->
+                audience.disconnect(
+                    playerId,
+                    cfg.accessMessages.drainDisconnect,
+                    mapOf("server" to target.value, "hub" to cfg.hubServer.value),
+                )
+            }
+            s.fallbackDisconnectIssued = true
         }
+
+        // The regular path waits for Velocity to observe an empty target on
+        // the next tick. The force timeout remains the final safety valve: all
+        // remaining disconnects are issued before the immediate restart arm.
+        if (timedOut) sendRestart(target, s, now)
     }
 
-    private fun dispatchDueBatches(target: ServerId, cfg: QueueRestartConfig, s: TargetState, now: Instant) {
+    private fun dispatchDueBatches(cfg: QueueRestartConfig, s: TargetState, now: Instant) {
         val intervalMillis = (cfg.drain.batchIntervalTicks * 50L) // 1 tick = 50ms
         while (s.pendingBatches.isNotEmpty() && (s.nextBatchAt == null || !now.isBefore(s.nextBatchAt))) {
             val batch = s.pendingBatches.removeFirst()
@@ -210,18 +255,65 @@ class RestartOrchestrator(
         }
     }
 
-    private fun sendRestart(target: ServerId) {
-        val coord = registry.get(target)
-        if (coord.state != RestartState.DRAINING) return
-        // RestartNow was already shipped at countdown start (see tickArmed) —
-        // the companion's local timer fires the actual shutdown. Here we just
-        // advance the state machine once draining has finished so the ping
-        // poller starts watching for the server to come back.
-        coord.restartSent()
+    /** Persisted plan authority calls this before T-0 side effects are allowed. */
+    @Synchronized
+    fun prepareRestartHandoff(target: ServerId, baselineBootId: UUID): Boolean {
+        val coordinator = registry.get(target)
+        if (coordinator.state != RestartState.COUNTDOWN) return false
+        val targetState = state.getOrPut(target) { TargetState() }
+        targetState.preparedBaselineBootId = baselineBootId
+        return true
+    }
+
+    private fun sendRestart(target: ServerId, targetState: TargetState, now: Instant) {
+        val coordinator = registry.get(target)
+        if (coordinator.state != RestartState.DRAINING) return
+        val preparedBaseline = targetState.preparedBaselineBootId
+            ?: throw IllegalStateException("restart handoff for ${target.value} was not durably prepared")
+
+        if (targetState.restartDeliveryId == null) {
+            val currentIdentity = companionIdentity(target)
+            check(currentIdentity == preparedBaseline) {
+                "authenticated companion identity changed before restart delivery for ${target.value}"
+            }
+            val deliveryId = pendingArmStore.put(
+                target,
+                mode = restartMode,
+                argument = restartArg,
+                delaySeconds = 0,
+                expectedBootId = preparedBaseline,
+                now = now,
+            )
+            targetState.restartDeliveryId = deliveryId
+            messaging.sendRestartNow(target, deliveryId, restartMode, restartArg, delaySeconds = 0)
+        }
+
+        // This callback persists that an idempotent delivery exists before the
+        // ephemeral coordinator advances. If persistence fails, the next tick
+        // retries the callback with the same delivery id rather than creating a
+        // second independently executable restart.
+        check(onRestartPublished(target, preparedBaseline)) {
+            "persisted plan rejected restart publication for ${target.value}"
+        }
+        coordinator.restartSent(preparedBaseline)
         state.remove(target)
     }
 
+    /** Operator-only reset after manually verifying an uncertain backend state. */
+    @Synchronized
+    fun resolveAfterManualReview(target: ServerId): Boolean {
+        val coordinator = registry.get(target)
+        if (coordinator.state == RestartState.IDLE) return false
+        coordinator.forceResetAfterReview()
+        state.remove(target)
+        options.clear(target)
+        pendingArmStore.clear(target)
+        broadcaster.cancel(target)
+        return true
+    }
+
     /** Called by PingPoller after coord.serverUp(). */
+    @Synchronized
     fun finishRejoin(target: ServerId, nowSeconds: Long) {
         val coord = registry.get(target)
         if (coord.state != RestartState.REJOIN_RELEASE) return

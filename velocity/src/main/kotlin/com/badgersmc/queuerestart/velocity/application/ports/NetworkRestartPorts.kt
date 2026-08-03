@@ -9,12 +9,21 @@ data class PowerActionResult(val accepted: Boolean, val detail: String)
 
 interface ExternalRestartExecutor {
     val name: String
+
+    /** False for validation-only executors that must not move or disconnect players. */
+    val performsPowerActions: Boolean get() = true
+
+    /** Stable executor instance for one destructive plan execution. */
+    fun snapshot(): ExternalRestartExecutor = this
+
     fun preflight(panelServerId: String): CompletionStage<PowerActionResult>
     fun restart(actionKey: String, panelServerId: String): CompletionStage<PowerActionResult>
 }
 
 interface NetworkControlPort {
     fun broadcast(notice: RestartNotice)
+    /** Play a countdown cue to every currently connected proxy player. */
+    fun playSound(cue: SoundCue) = Unit
     fun disconnectAll(notice: RestartNotice)
     fun transferAll(from: ServerId, destinations: List<ServerId>): CompletionStage<TransferSummary>
     fun setMaintenance(enabled: Boolean, duration: Duration)

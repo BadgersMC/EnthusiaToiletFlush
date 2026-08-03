@@ -1,0 +1,78 @@
+package com.badgersmc.queuerestart.common.security
+
+import com.badgersmc.queuerestart.common.protocol.DrainRequestMessage
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.Test
+
+class ControlSecurityTest {
+    private val secret = "0123456789abcdef0123456789abcdef"
+
+    @Test
+    fun `authenticated frame round trips with direction binding`() {
+        val encoder = AuthenticatedMessageCodec(secret, nowSeconds = { 1_000 })
+        val decoder = AuthenticatedMessageCodec(secret, nowSeconds = { 1_000 })
+        val frame = encoder.encode(DrainRequestMessage, ControlDirection.PROXY_TO_BACKEND, "SMP")
+        assertThat(decoder.decode(frame, ControlDirection.PROXY_TO_BACKEND, "SMP")).isEqualTo(DrainRequestMessage)
+    }
+
+    @Test
+    fun `tampering wrong direction stale and replay are rejected`() {
+        val encoder = AuthenticatedMessageCodec(secret, nowSeconds = { 1_000 })
+        val frame = encoder.encode(DrainRequestMessage, ControlDirection.PROXY_TO_BACKEND, "SMP")
+        val tampered = frame.clone().also { it[10] = (it[10].toInt() xor 1).toByte() }
+        assertThatThrownBy {
+            AuthenticatedMessageCodec(secret, nowSeconds = { 1_000 }).decode(tampered, ControlDirection.PROXY_TO_BACKEND, "SMP")
+        }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy {
+            AuthenticatedMessageCodec(secret, nowSeconds = { 1_000 }).decode(frame, ControlDirection.BACKEND_TO_PROXY, "SMP")
+        }.isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy {
+            AuthenticatedMessageCodec(secret, nowSeconds = { 2_000 }).decode(frame, ControlDirection.PROXY_TO_BACKEND, "SMP")
+        }.isInstanceOf(IllegalArgumentException::class.java)
+
+        val decoder = AuthenticatedMessageCodec(secret, nowSeconds = { 1_000 })
+        decoder.decode(frame, ControlDirection.PROXY_TO_BACKEND, "SMP")
+        assertThatThrownBy { decoder.decode(frame, ControlDirection.PROXY_TO_BACKEND, "SMP") }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test
+    fun `replay window must cover the full accepted clock skew`() {
+        assertThatThrownBy {
+            AuthenticatedMessageCodec(
+                secret,
+                maxClockSkewSeconds = 60,
+                replayWindow = ReplayWindow(ttlSeconds = 119),
+            )
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("twice the maximum clock skew")
+
+        AuthenticatedMessageCodec(
+            secret,
+            maxClockSkewSeconds = 60,
+            replayWindow = ReplayWindow(ttlSeconds = 120),
+        )
+    }
+
+    @Test
+    fun `missing control secret names both configuration locations`() {
+        assertThatThrownBy { ControlAuthenticator.validateSecret("") }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("control secret is not configured")
+            .hasMessageContaining("plugins/queue-restart/config.yml")
+            .hasMessageContaining("plugins/EnthusiaToiletFlush/config.yml")
+            .hasMessageContaining("QUEUE_RESTART_CONTROL_SECRET")
+    }
+
+    @Test
+    fun `short and placeholder secrets fail closed`() {
+        assertThatThrownBy { ControlAuthenticator.validateSecret("short") }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("too short")
+            .hasMessageContaining("same 32-256 UTF-8 byte random value")
+        assertThatThrownBy { ControlAuthenticator.validateSecret("CHANGE_ME_012345678901234567890123456789") }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+}

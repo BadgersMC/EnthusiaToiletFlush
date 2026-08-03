@@ -7,6 +7,8 @@ import com.mojang.brigadier.context.CommandContext
 import com.mojang.brigadier.tree.LiteralCommandNode
 import com.velocitypowered.api.command.BrigadierCommand
 import com.velocitypowered.api.command.CommandSource
+import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 
 /**
  * Brigadier shim for `/qrestart`. Permission-gated on
@@ -16,6 +18,7 @@ import com.velocitypowered.api.command.CommandSource
  * ```
  *  /qrestart reload
  *  /qrestart trigger <name>
+ *  /qrestart resolve <planIdPrefix>
  * ```
  */
 class QRestartAdminCommand(
@@ -30,7 +33,7 @@ class QRestartAdminCommand(
         val root = BrigadierCommand.literalArgumentBuilder(LITERAL)
             .requires { it.hasPermission(PERMISSION) }
             .executes { ctx ->
-                send(ctx, "<red>Usage: /$LITERAL reload | trigger <scheduleName>")
+                send(ctx, "<red>Usage: /$LITERAL reload | trigger <scheduleName> | resolve <planIdPrefix>")
                 0
             }
             .then(
@@ -58,6 +61,22 @@ class QRestartAdminCommand(
                         0
                     },
             )
+            .then(
+                BrigadierCommand.literalArgumentBuilder("resolve")
+                    .then(
+                        BrigadierCommand.requiredArgumentBuilder<String>(
+                            "plan",
+                            StringArgumentType.word(),
+                        ).executes { ctx ->
+                            renderResult(ctx, handler.resolve(StringArgumentType.getString(ctx, "plan")))
+                            1
+                        },
+                    )
+                    .executes { ctx ->
+                        send(ctx, "<red>Usage: /$LITERAL resolve <planIdPrefix>")
+                        0
+                    },
+            )
 
         val node: LiteralCommandNode<CommandSource> = root.build()
         return BrigadierCommand(node)
@@ -68,9 +87,27 @@ class QRestartAdminCommand(
             is AdminCommandResult.Reloaded ->
                 send(ctx, "<green>Config + cron reloaded. In-flight countdowns preserved.")
             is AdminCommandResult.Triggered ->
-                send(ctx, "<green>Triggered schedule <white>${result.schedule}<green>.")
+                ctx.source.sendMessage(
+                    Component.text("Triggered schedule ", NamedTextColor.GREEN)
+                        .append(Component.text(result.schedule, NamedTextColor.WHITE))
+                        .append(Component.text(".", NamedTextColor.GREEN)),
+                )
+            is AdminCommandResult.Resolved ->
+                ctx.source.sendMessage(
+                    Component.text("Resolved NEEDS_REVIEW plan ", NamedTextColor.YELLOW)
+                        .append(Component.text(result.plan, NamedTextColor.WHITE))
+                        .append(
+                            Component.text(
+                                ". Verify the network manually before reopening access.",
+                                NamedTextColor.YELLOW,
+                            ),
+                        ),
+                )
             is AdminCommandResult.Rejected ->
-                send(ctx, "<red>Rejected: ${result.reason}")
+                ctx.source.sendMessage(
+                    Component.text("Rejected: ", NamedTextColor.RED)
+                        .append(Component.text(result.reason, NamedTextColor.WHITE)),
+                )
         }
     }
 
