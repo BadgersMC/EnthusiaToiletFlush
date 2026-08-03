@@ -1,22 +1,23 @@
-name: apply PR 6 countdown reliability fix
+name: validate PR 6 countdown reliability fix
 
 on:
-  push:
-    branches:
-      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply:
+  validate:
+    if: github.event.pull_request.number == 6
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12
         with:
           distribution: temurin
@@ -49,13 +50,22 @@ jobs:
           unzip -p "$paper_jar" plugin.yml | tee /tmp/paper-plugin.yml
           grep -F '"version": "0.1.0-SNAPSHOT"' /tmp/velocity-plugin.json
           grep -F 'version: 0.1.0-SNAPSHOT' /tmp/paper-plugin.yml
-      - name: Commit validated changes
+      - name: Package validated source tree
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git status --short
-          git add -A
-          git diff --cached --check
-          git commit -m "fix: restore countdown delivery and restart notices"
-          git push origin HEAD:main
+          mkdir -p /tmp/pr6-final/tree
+          git diff --name-status > /tmp/pr6-final/manifest.txt
+          while IFS=$'\t' read -r status path; do
+            case "$status" in
+              D*) ;;
+              *) cp --parents "$path" /tmp/pr6-final/tree ;;
+            esac
+          done < /tmp/pr6-final/manifest.txt
+          cp /tmp/velocity-plugin.json /tmp/pr6-final/
+          cp /tmp/paper-plugin.yml /tmp/pr6-final/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr6-validated-source
+          path: /tmp/pr6-final
+          if-no-files-found: error
+          retention-days: 1
