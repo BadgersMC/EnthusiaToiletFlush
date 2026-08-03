@@ -26,7 +26,18 @@ jobs:
       - name: Apply reviewed runtime patch
         shell: bash
         run: |
-          base64 --decode .github/pr6-runtime/patch-all | gzip -dc > /tmp/patch.py
+          cat .github/pr6-runtime/patch00 .github/pr6-runtime/patch01 .github/pr6-runtime/patch02 .github/pr6-runtime/patch03 \
+            | base64 --decode | gzip -dc > /tmp/patch.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/patch.py')
+          source = path.read_text()
+          source = source.replace(
+              'plans.joinToString("\\n", postfix = if (plans.isEmpty()) "" else "\\n", transform = ::encode)',
+              'plans.joinToString("\\\\n", postfix = if (plans.isEmpty()) "" else "\\\\n", transform = ::encode)',
+          )
+          path.write_text(source)
+          PY
           python /tmp/patch.py
           rm -f /tmp/patch.py
           rm -rf .github/pr6-runtime
