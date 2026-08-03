@@ -41,13 +41,24 @@ jobs:
           python /tmp/patch.py
           python - <<'PY'
           from pathlib import Path
-          path = Path('velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapterTest.kt')
-          source = path.read_text()
-          source = source.replace(
+          config_test = Path('velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapterTest.kt')
+          source = config_test.read_text().replace(
               '.replace("message: "<gold>warning"", "message: "<aqua>reloaded"")',
               '.replace("message: \\"<gold>warning\\"", "message: \\"<aqua>reloaded\\"")',
           )
-          path.write_text(source)
+          config_test.write_text(source)
+
+          service = Path('velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt')
+          source = service.read_text()
+          source = source.replace(
+              '} else if (!plan.silent) {\n                announcement(plan, remaining, urgent = false)',
+              '} else if (!plan.silent && remaining > 0L) {\n                announcement(plan, remaining, urgent = false)',
+          )
+          source = source.replace(
+              'if (plan.type != PlanType.SERVER && !plan.silent) announceDue(plan, currentRemaining)',
+              'if (plan.type != PlanType.SERVER && !plan.silent && currentRemaining > 0L) announceDue(plan, currentRemaining)',
+          )
+          service.write_text(source)
           PY
           rm -f /tmp/patch.py
           rm -rf .github/pr6-runtime
