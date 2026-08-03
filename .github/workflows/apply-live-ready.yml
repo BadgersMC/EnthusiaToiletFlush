@@ -42,6 +42,7 @@ jobs:
           git diff --exit-code 30ca316de5098083c2b99c3ab52637335ccde001 HEAD -- . \
             ':(exclude).github/pr6-runtime/**' \
             ':(exclude).github/workflows/apply-live-ready.yml'
+          echo 'source baseline verified'
 
           cat \
             .github/pr6-runtime/live-ready-final.part00 \
@@ -53,6 +54,8 @@ jobs:
             .github/pr6-runtime/live-ready-final.part11-12 \
             | tr -d '\r\n' > /tmp/live-ready-final.patch.gz.b64
 
+          echo "payload length: $(wc -c < /tmp/live-ready-final.patch.gz.b64)"
+          sha256sum /tmp/live-ready-final.patch.gz.b64
           test "$(wc -c < /tmp/live-ready-final.patch.gz.b64)" -eq 87808
           echo '94446bb822910287d99a1a36eecc27521b295e9651928dab6ef9f03fa98476a9  /tmp/live-ready-final.patch.gz.b64' | sha256sum -c -
           base64 --decode /tmp/live-ready-final.patch.gz.b64 > /tmp/live-ready-final.patch.gz
