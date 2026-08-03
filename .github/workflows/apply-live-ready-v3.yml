@@ -28,7 +28,7 @@ jobs:
           java-version: 21
           cache: gradle
 
-      - name: Reconstruct verified source patch and apply follow-up
+      - name: Reconstruct verified source patch and apply follow-ups
         shell: bash
         run: |
           set -euo pipefail
@@ -38,7 +38,8 @@ jobs:
             ':(exclude).github/workflows/apply-live-ready.yml' \
             ':(exclude).github/workflows/apply-live-ready-v2.yml' \
             ':(exclude).github/workflows/apply-live-ready-v3.yml' \
-            ':(exclude).github/workflows/diagnose-patch-chunks.yml'
+            ':(exclude).github/workflows/diagnose-patch-chunks.yml' \
+            ':(exclude).github/workflows/export-live-ready-candidate.yml'
 
           python - <<'PY'
           from pathlib import Path
@@ -55,11 +56,16 @@ jobs:
           git apply --check .github/pr6-runtime/live-ready-followup-01.patch
           git apply --whitespace=error-all .github/pr6-runtime/live-ready-followup-01.patch
 
+          echo '7307e5a5940fd2bce4b45573d6e09aac4ad6eab806a8701649e628509a645ca3  .github/pr6-runtime/live-ready-followup-02.patch' | sha256sum -c -
+          git apply --check .github/pr6-runtime/live-ready-followup-02.patch
+          git apply --whitespace=error-all .github/pr6-runtime/live-ready-followup-02.patch
+
           rm -rf .github/pr6-runtime
           rm -f .github/workflows/apply-live-ready.yml
           rm -f .github/workflows/apply-live-ready-v2.yml
           rm -f .github/workflows/apply-live-ready-v3.yml
           rm -f .github/workflows/diagnose-patch-chunks.yml
+          rm -f .github/workflows/export-live-ready-candidate.yml
           git diff --check
           test ! -d .github/pr6-runtime
 
