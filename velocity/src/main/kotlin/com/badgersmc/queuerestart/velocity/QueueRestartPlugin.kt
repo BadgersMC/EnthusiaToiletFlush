@@ -153,7 +153,9 @@ class QueueRestartPlugin @Inject constructor(
                 coordinatorRegistry,
                 cfgSnapshot,
                 hubResolver,
-                additionalBlocked = { target -> networkService.blocksBackendAccess(target) },
+                additionalBlocked = { target ->
+                    !::networkService.isInitialized || networkService.blocksBackendAccess(target)
+                },
             ),
         )
         val countdownBroadcaster = CountdownBroadcaster(
@@ -215,7 +217,11 @@ class QueueRestartPlugin @Inject constructor(
             options = backendOptions,
             companionIdentity = freshCompanionIdentity,
             onRestartPublished = { target, baseline ->
-                networkService.markBackendHandoffPublished(target, baseline)
+                if (::networkService.isInitialized) {
+                    networkService.markBackendHandoffPublished(target, baseline)
+                } else {
+                    false
+                }
             },
         )
         orchestrator.start()
