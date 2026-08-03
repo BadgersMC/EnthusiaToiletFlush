@@ -85,7 +85,9 @@ class AtomicRestartPlanStoreTest {
         assertThat(restored.executionDeadlineAt).isNull()
         assertThat(restored.failure).isEmpty()
         assertThat(restored.completedAt).isNotNull()
-        assertThat(warnings).anyMatch { it.contains(restored.id.toString()).contains("completed") }
+        assertThat(warnings).anyMatch {
+            it.contains(restored.id.toString()) && it.contains("completed")
+        }
     }
 
     @Test
@@ -128,7 +130,9 @@ class AtomicRestartPlanStoreTest {
         assertThat(restored.maintenanceEnabled).isTrue()
         assertThat(restored.failure).isEmpty()
         assertThat(restored.executionDeadlineAt).isAfter(beforeLoad.plusSeconds(500))
-        assertThat(warnings).anyMatch { it.contains(restored.id.toString()).contains("resumed") }
+        assertThat(warnings).anyMatch {
+            it.contains(restored.id.toString()) && it.contains("resumed")
+        }
     }
 
     @Test
