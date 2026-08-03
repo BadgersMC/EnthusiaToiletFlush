@@ -1,28 +1,23 @@
-name: validate PR 6 countdown reliability fix
+name: finalize PR 6 countdown reliability fix
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  validate:
-    if: github.event.pull_request.number == 6
+  finalize:
+    if: github.repository == 'wsg138/EnthusiaToiletFlush'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: main
           fetch-depth: 0
-          persist-credentials: false
-      - name: Package exact current source
-        shell: bash
-        run: |
-          mkdir -p /tmp/pr6-trees
-          tar --exclude=.git -czf /tmp/pr6-trees/current-source.tar.gz .
       - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12
         with:
           distribution: temurin
@@ -86,15 +81,14 @@ jobs:
           unzip -p "$paper_jar" plugin.yml | tee /tmp/paper-plugin.yml
           grep -F '"version": "0.1.0-SNAPSHOT"' /tmp/velocity-plugin.json
           grep -F 'version: 0.1.0-SNAPSHOT' /tmp/paper-plugin.yml
-      - name: Package exact validated source
+      - name: Commit validated changes
         shell: bash
         run: |
-          tar --exclude=.git --exclude=.gradle --exclude='*/build' -czf /tmp/pr6-trees/final-source.tar.gz .
-          cp /tmp/velocity-plugin.json /tmp/pr6-trees/
-          cp /tmp/paper-plugin.yml /tmp/pr6-trees/
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: pr6-validated-trees
-          path: /tmp/pr6-trees
-          if-no-files-found: error
-          retention-days: 1
+          git status --short
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: restore countdown delivery and restart notices"
+          git push origin HEAD:main
