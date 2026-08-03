@@ -246,7 +246,7 @@ class QueueRestartPlugin @Inject constructor(
 
         val schedRestartHandler = SchedRestartCommandHandler(
             registry = coordinatorRegistry,
-            hubServer = cfgSnapshot().hubServer,
+            hubServer = { cfgSnapshot().hubServer },
             companionPresent = { target ->
                 companionRegistry.isCompatible(
                     target,
