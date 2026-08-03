@@ -31,20 +31,20 @@ class NetworkRestartHandoffSafetyTest {
             hub to UUID.fromString("40000000-0000-0000-0000-000000000001"),
             smp to expectedBoot,
         )
-        val now = Instant.parse("2026-08-03T18:00:00Z")
+        val warningAt = Instant.now().plusSeconds(10)
         val service = service(boots)
         val plan = service.createManual(
             PlanType.SERVER,
             setOf(smp),
-            now.plusSeconds(1),
-            now,
+            warningAt.plusSeconds(1),
+            warningAt,
             "baseline safety",
             "console",
             false,
         )
 
-        service.tick(now)
-        service.tick(now.plusSeconds(2))
+        service.tick(warningAt)
+        service.tick(warningAt.plusSeconds(2))
         assertThat(plan.state).isEqualTo(PlanState.DISPATCHING)
         assertThat(plan.actionStarted).isFalse()
 
