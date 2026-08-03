@@ -1,0 +1,77 @@
+diff --git a/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt b/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
+index 4be4198..d7c1750 100644
+--- a/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
++++ b/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartService.kt
+@@ -508,10 +508,14 @@ class NetworkRestartService(
+                 restartBatch(plan, nonHubs, cfg, executionExecutor)
+             }
+             .thenCompose {
+-                CompletableFuture.runAsync(
+-                    {},
+-                    CompletableFuture.delayedExecutor(cfg.backendHeadStartSeconds, TimeUnit.SECONDS),
+-                )
++                if (cfg.backendHeadStartSeconds == 0L) {
++                    CompletableFuture.completedFuture<Void>(null)
++                } else {
++                    CompletableFuture.runAsync(
++                        {},
++                        CompletableFuture.delayedExecutor(cfg.backendHeadStartSeconds, TimeUnit.SECONDS),
++                    )
++                }
+             }
+             .thenCompose {
+                 synchronized(this) {
+diff --git a/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapter.kt b/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapter.kt
+index 7cc72f0..0aa0d21 100644
+--- a/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapter.kt
++++ b/velocity/src/main/kotlin/com/badgersmc/queuerestart/velocity/infrastructure/config/ConfigurateConfigAdapter.kt
+@@ -15,6 +15,8 @@ import com.badgersmc.queuerestart.velocity.application.ports.SoundCue
+ import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+ import org.spongepowered.configurate.ConfigurationNode
+ import org.spongepowered.configurate.yaml.YamlConfigurationLoader
++import java.nio.charset.StandardCharsets
++import java.nio.file.Files
+ import java.nio.file.Path
+ 
+ /** Transactional Configurate-YAML adapter with strict release-safety validation. */
+@@ -38,6 +40,7 @@ class ConfigurateConfigAdapter(
+     }
+ 
+     private fun parse(): QueueRestartConfig {
++        validateRawConfiguration()
+         val root = YamlConfigurationLoader.builder().path(path).build().load()
+         val networkRestart = parseNetworkRestart(root.node("network-restart"))
+         val controlSecurity = parseControlSecurity(root.node("control-security"))
+@@ -59,6 +62,12 @@ class ConfigurateConfigAdapter(
+         ).also(::validateRoot)
+     }
+ 
++    private fun validateRawConfiguration() {
++        require(Files.size(path) <= MAX_CONFIG_BYTES) { "config.yml exceeds the 1 MiB safety limit" }
++        val raw = Files.readString(path, StandardCharsets.UTF_8)
++        require('\u0000' !in raw) { "config.yml may not contain NUL" }
++    }
++
+     private fun parseControlSecurity(node: ConfigurationNode): ControlSecurityConfig {
+         val secret = expandEnvironment(node.node("secret").string.orEmpty())
+         ControlAuthenticator.validateSecret(secret)
+@@ -338,6 +347,7 @@ class ConfigurateConfigAdapter(
+     private fun ConfigurationNode.requireDouble(): Double = double
+ 
+     companion object {
++        private const val MAX_CONFIG_BYTES = 1024L * 1024L
+         private val SERVER_ID_REGEX = Regex("[A-Za-z0-9_.-]{1,64}")
+         private val PANEL_ID_REGEX = Regex("[A-Za-z0-9_-]{4,64}")
+     }
+diff --git a/velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartServiceTest.kt b/velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartServiceTest.kt
+index 7c00617..73ce014 100644
+--- a/velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartServiceTest.kt
++++ b/velocity/src/test/kotlin/com/badgersmc/queuerestart/velocity/application/network/NetworkRestartServiceTest.kt
+@@ -377,6 +377,7 @@ class NetworkRestartServiceTest {
+             proxyServerId = "proxy1234",
+             members = listOf(hub, smp),
+             hubServers = listOf(hub),
++            backendHeadStartSeconds = 0,
+         )
+         return NetworkRestartService(
+             config = { config },
