@@ -1,0 +1,42 @@
+name: diagnose-patch-chunks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.repository == 'wsg138/EnthusiaToiletFlush'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Hash normalized individual slices
+        shell: bash
+        run: |
+          set -euo pipefail
+          d=.github/pr6-runtime
+          mkdir -p /tmp/chunks
+          cp "$d/live-ready-final.part00" /tmp/chunks/chunk00
+          cp "$d/live-ready-final.chunk01" /tmp/chunks/chunk01
+          cp "$d/live-ready-final.chunk02" /tmp/chunks/chunk02
+          cp "$d/live-ready-final.chunk03" /tmp/chunks/chunk03
+          for pair in 03-04 05-06 07-08 09-10 11-12; do
+            tr -d '\r\n' < "$d/live-ready-final.part$pair" > "/tmp/pair-$pair"
+          done
+          dd if=/tmp/pair-03-04 of=/tmp/chunks/chunk04 bs=1 skip=7000 count=7000 status=none
+          dd if=/tmp/pair-05-06 of=/tmp/chunks/chunk05 bs=1 count=7000 status=none
+          dd if=/tmp/pair-05-06 of=/tmp/chunks/chunk06 bs=1 skip=7000 count=7000 status=none
+          dd if=/tmp/pair-07-08 of=/tmp/chunks/chunk07 bs=1 count=7000 status=none
+          dd if=/tmp/pair-07-08 of=/tmp/chunks/chunk08 bs=1 skip=7000 count=7000 status=none
+          dd if=/tmp/pair-09-10 of=/tmp/chunks/chunk09 bs=1 count=7000 status=none
+          dd if=/tmp/pair-09-10 of=/tmp/chunks/chunk10 bs=1 skip=7000 count=7000 status=none
+          dd if=/tmp/pair-11-12 of=/tmp/chunks/chunk11 bs=1 count=7000 status=none
+          dd if=/tmp/pair-11-12 of=/tmp/chunks/chunk12 bs=1 skip=7000 status=none
+          wc -c /tmp/chunks/chunk*
+          sha256sum /tmp/chunks/chunk*
