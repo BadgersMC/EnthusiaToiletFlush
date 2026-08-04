@@ -836,7 +836,9 @@ class NetworkRestartService(
         if (left.type != PlanType.SERVER || right.type != PlanType.SERVER) true else left.targets.any(right.targets::contains)
 
     private fun isLegacyRecoveryRegression(plan: RestartPlan): Boolean =
-        plan.failure == LEGACY_INTERRUPTED_FAILURE &&
+        plan.type in setOf(PlanType.PROXY, PlanType.NETWORK) &&
+            plan.actionStarted &&
+            plan.failure == LEGACY_INTERRUPTED_FAILURE &&
             plan.completedAt == null &&
             plan.executionDeadlineAt == null &&
             plan.dispatchedActionKeys.isEmpty() &&

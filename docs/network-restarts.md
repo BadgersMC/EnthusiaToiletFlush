@@ -85,9 +85,10 @@ interrupted during preflight, transfer, or dispatch are marked
 Recovery preserves terminal plans even when their durable `actionStarted`
 history remains true. On the first startup after this fix, records produced by
 the known recovery regression are repaired only when a persisted completion
-timestamp proves completion, or when the exact legacy failure has none of the
-dispatch, acceptance, boot-baseline, result, or deadline evidence written by a
-real destructive execution. Ambiguous records remain `NEEDS_REVIEW`.
+timestamp proves completion, or when a proxy/network record has only the
+legacy `actionStarted` flag and none of the dispatch, acceptance, boot-baseline,
+result, or deadline evidence written by a real destructive execution. Ambiguous
+records remain `NEEDS_REVIEW`.
 
 Countdown message templates and sound definitions are resolved at each mark,
 so a successful `/qrestart reload` affects active and future countdowns. A

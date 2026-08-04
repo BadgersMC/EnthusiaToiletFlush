@@ -16,6 +16,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.ConcurrentHashMap
@@ -119,26 +120,74 @@ class NetworkRestartRecoveryRegressionTest {
     }
 
     @Test
-    fun `review with durable dispatch evidence remains fail closed`() {
+    fun `every durable execution evidence field keeps review fail closed`() {
+        val now = Instant.now()
+        val evidence = listOf<Pair<String, (RestartPlan) -> Unit>>(
+            "dispatch key" to { it.dispatchedActionKeys += "${it.id}:proxy" },
+            "acceptance key" to { it.acceptedActionKeys += "${it.id}:proxy" },
+            "backend baseline" to { it.baselineBootIds[smp] = UUID.randomUUID() },
+            "proxy baseline" to { it.proxyBaselineBootId = UUID.randomUUID() },
+            "result" to { it.targetResults["proxy"] = "accepted" },
+            "execution deadline" to { it.executionDeadlineAt = now.plusSeconds(60) },
+        )
+
+        evidence.forEach { (name, addEvidence) ->
+            val store = MemoryStore()
+            val review = plan(
+                PlanType.PROXY,
+                PlanState.NEEDS_REVIEW,
+                now,
+                actionStarted = true,
+                maintenanceEnabled = true,
+                failure = LEGACY_FAILURE,
+            )
+            addEvidence(review)
+            store.save(listOf(review))
+            val control = FakeControl()
+
+            val recovered = service(control, store).allPlans().single()
+
+            assertThat(recovered.state).describedAs(name).isEqualTo(PlanState.NEEDS_REVIEW)
+            assertThat(recovered.maintenanceEnabled).describedAs(name).isTrue()
+            assertThat(control.maintenanceEnables).describedAs(name).isGreaterThanOrEqualTo(1)
+        }
+    }
+
+    @Test
+    fun `legacy failure without actionStarted remains unresolved`() {
         val store = MemoryStore()
         val now = Instant.now()
         val review = plan(
             PlanType.PROXY,
             PlanState.NEEDS_REVIEW,
             now,
-            actionStarted = true,
+            actionStarted = false,
             maintenanceEnabled = true,
             failure = LEGACY_FAILURE,
         )
-        review.dispatchedActionKeys += "${review.id}:proxy"
         store.save(listOf(review))
-        val control = FakeControl()
 
-        val recovered = service(control, store).allPlans().single()
+        val recovered = service(FakeControl(), store).allPlans().single()
 
         assertThat(recovered.state).isEqualTo(PlanState.NEEDS_REVIEW)
-        assertThat(recovered.maintenanceEnabled).isTrue()
-        assertThat(control.maintenanceEnables).isGreaterThanOrEqualTo(1)
+    }
+
+    @Test
+    fun `server review is never cleared by proxy network legacy migration`() {
+        val store = MemoryStore()
+        val now = Instant.now()
+        val review = plan(
+            PlanType.SERVER,
+            PlanState.NEEDS_REVIEW,
+            now,
+            actionStarted = true,
+            failure = LEGACY_FAILURE,
+        )
+        store.save(listOf(review))
+
+        val recovered = service(FakeControl(), store).allPlans().single()
+
+        assertThat(recovered.state).isEqualTo(PlanState.NEEDS_REVIEW)
     }
 
     private fun plan(
@@ -151,7 +200,11 @@ class NetworkRestartRecoveryRegressionTest {
         failure: String = "",
     ): RestartPlan = RestartPlan(
         type = type,
-        targets = if (type == PlanType.PROXY) emptySet() else setOf(hub, smp),
+        targets = when (type) {
+            PlanType.PROXY -> emptySet()
+            PlanType.SERVER -> setOf(smp)
+            PlanType.NETWORK -> setOf(hub, smp)
+        },
         createdAt = now.minusSeconds(120),
         executionAt = now.minusSeconds(60),
         warningAt = now.minusSeconds(180),
