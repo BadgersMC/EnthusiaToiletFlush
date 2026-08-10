@@ -17,6 +17,7 @@ import net.kyori.adventure.key.Key
 import net.kyori.adventure.sound.Sound
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.TimeUnit
@@ -60,7 +61,7 @@ class VelocityNetworkControl(
         val targets = destinations.mapNotNull { proxy.getServer(it.value).orElse(null) }
         val work = players.map { player -> move(player, targets, from) }
         return CompletableFuture.allOf(*work.toTypedArray()).thenApply {
-            val results = work.map { it.getNow(TransferResult(false, true)) }
+            val results = work.map { it.getNow(TransferResult(false, false)) }
             TransferSummary(
                 results.count { it.moved },
                 results.count { it.disconnected },
@@ -91,13 +92,16 @@ class VelocityNetworkControl(
     ): CompletableFuture<TransferResult> {
         fun next(index: Int): CompletableFuture<TransferResult> {
             if (index >= targets.size) {
+                val playerId = player.uniqueId
                 player.disconnect(
                     renderer.render(
                         accessMessages().drainDisconnect,
                         mapOf("server" to source.value),
                     ),
                 )
-                return CompletableFuture.completedFuture(TransferResult(false, true))
+                return awaitPlayerGone(playerId, 0).thenApply { disconnected ->
+                    TransferResult(false, disconnected)
+                }
             }
             return player.createConnectionRequest(targets[index]).connect().toCompletableFuture().handle { result, error ->
                 if (error == null && result.isSuccessful) {
@@ -110,10 +114,24 @@ class VelocityNetworkControl(
         return next(0)
     }
 
+    private fun awaitPlayerGone(playerId: UUID, attempt: Int): CompletableFuture<Boolean> {
+        if (proxy.getPlayer(playerId).isEmpty) {
+            return CompletableFuture.completedFuture(true)
+        }
+        if (attempt >= DISCONNECT_SETTLE_ATTEMPTS) {
+            return CompletableFuture.completedFuture(false)
+        }
+        return CompletableFuture.runAsync(
+            {},
+            CompletableFuture.delayedExecutor(DISCONNECT_POLL_MILLIS, TimeUnit.MILLISECONDS),
+        ).thenCompose { awaitPlayerGone(playerId, attempt + 1) }
+    }
+
     private data class TransferResult(val moved: Boolean, val disconnected: Boolean)
 
     companion object {
         private const val DISCONNECT_SETTLE_SECONDS = 5L
         private const val DISCONNECT_POLL_MILLIS = 50L
+        private const val DISCONNECT_SETTLE_ATTEMPTS = 100
     }
 }
