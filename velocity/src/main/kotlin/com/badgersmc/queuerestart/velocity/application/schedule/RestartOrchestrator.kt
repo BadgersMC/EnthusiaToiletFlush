@@ -245,12 +245,11 @@ class RestartOrchestrator(
             s.fallbackDisconnectIssued = true
         }
 
-        // A force timeout used to publish the backend restart in the same tick
-        // that disconnects were merely requested. Wait until the adapter has
-        // observed those disconnects settle. If settlement itself times out,
-        // preserve the configured force-drain timeout as the final safety valve.
-        if (s.fallbackDisconnectIssued && s.disconnectResults.values.all { it.isDone }) {
-            val disconnectsSettled = s.disconnectResults.values.all { it.getNow(false) }
+        // Successful disconnect settlement is the normal restart path. The
+        // configured force timeout remains a hard upper bound even if an
+        // adapter returns a disconnect stage that never completes.
+        if (s.fallbackDisconnectIssued) {
+            val disconnectsSettled = s.disconnectResults.values.all { it.isDone && it.getNow(false) }
             if (disconnectsSettled || timedOut) {
                 sendRestart(target, s, now)
             }
