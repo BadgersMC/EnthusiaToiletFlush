@@ -62,11 +62,15 @@ class VelocityNetworkControl(
         val work = players.map { player -> move(player, targets, from) }
         return CompletableFuture.allOf(*work.toTypedArray()).thenApply {
             val results = work.map { it.getNow(TransferResult(false, false)) }
-            TransferSummary(
+            val summary = TransferSummary(
                 results.count { it.moved },
                 results.count { it.disconnected },
                 results.count { !it.moved && !it.disconnected },
             )
+            check(summary.failed == 0) {
+                "failed to move or disconnect ${summary.failed} player(s) from ${from.value} before network restart"
+            }
+            summary
         }
     }
 
