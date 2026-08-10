@@ -83,6 +83,30 @@ class RestartDrainSettlementTest {
         assertThat(fixture.messaging.restarts).isEqualTo(1)
     }
 
+    @Test
+    fun `force timeout publishes restart when disconnect settlement never completes`() {
+        val proxy = SettlementProxy(player, hub)
+        proxy.transferResult = CompletableFuture.completedFuture(false)
+        val audience = SettlementAudience(proxy).apply { holdDisconnectOpen = true }
+        val fixture = fixture(proxy, audience)
+        val t0 = Instant.parse("2026-01-01T00:00:00Z")
+
+        fixture.registry.get(survival).arm(cohort(), durationSeconds = 10)
+        fixture.orchestrator.tick(t0)
+        assertThat(fixture.orchestrator.prepareRestartHandoff(survival, fixture.baseline)).isTrue()
+        fixture.orchestrator.tick(t0.plusSeconds(10))
+        fixture.orchestrator.tick(t0.plusSeconds(12))
+
+        assertThat(audience.disconnects).containsExactly(player)
+        assertThat(audience.disconnectResult).isNotDone()
+        assertThat(fixture.messaging.restarts).isZero()
+
+        fixture.orchestrator.tick(t0.plusSeconds(130))
+
+        assertThat(audience.disconnectResult).isNotDone()
+        assertThat(fixture.messaging.restarts).isEqualTo(1)
+    }
+
     private fun fixture(proxy: SettlementProxy, audience: SettlementAudience): Fixture {
         val registry = CoordinatorRegistry()
         val messaging = SettlementMessaging()
