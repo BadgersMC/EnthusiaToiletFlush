@@ -19,6 +19,8 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.LockSupport
 
 class VelocityNetworkControl(
     private val proxy: ProxyServer,
@@ -40,7 +42,17 @@ class VelocityNetworkControl(
 
     override fun disconnectAll(notice: RestartNotice) {
         val component = noticeRenderer.disconnect(notice)
-        proxy.allPlayers.forEach { it.disconnect(component) }
+        proxy.allPlayers.toList().forEach { it.disconnect(component) }
+
+        // Player.disconnect() only requests a disconnect. The old implementation
+        // returned immediately, allowing the following Pterodactyl restart to
+        // kill Velocity before the client-side disconnect completed. This method
+        // runs in the asynchronous network-restart dispatch chain, so a short,
+        // bounded settlement barrier is preferable to racing process teardown.
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DISCONNECT_SETTLE_SECONDS)
+        while (proxy.allPlayers.isNotEmpty() && System.nanoTime() < deadline) {
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(DISCONNECT_POLL_MILLIS))
+        }
     }
 
     override fun transferAll(from: ServerId, destinations: List<ServerId>): CompletionStage<TransferSummary> {
@@ -99,4 +111,9 @@ class VelocityNetworkControl(
     }
 
     private data class TransferResult(val moved: Boolean, val disconnected: Boolean)
+
+    companion object {
+        private const val DISCONNECT_SETTLE_SECONDS = 5L
+        private const val DISCONNECT_POLL_MILLIS = 50L
+    }
 }
