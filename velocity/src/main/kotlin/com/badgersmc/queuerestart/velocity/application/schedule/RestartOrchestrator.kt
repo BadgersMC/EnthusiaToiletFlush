@@ -247,10 +247,13 @@ class RestartOrchestrator(
 
         // A force timeout used to publish the backend restart in the same tick
         // that disconnects were merely requested. Wait until the adapter has
-        // observed those disconnects settle (or its bounded settle window ends)
-        // before publishing the destructive restart.
+        // observed those disconnects settle. If settlement itself times out,
+        // preserve the configured force-drain timeout as the final safety valve.
         if (s.fallbackDisconnectIssued && s.disconnectResults.values.all { it.isDone }) {
-            sendRestart(target, s, now)
+            val disconnectsSettled = s.disconnectResults.values.all { it.getNow(false) }
+            if (disconnectsSettled || timedOut) {
+                sendRestart(target, s, now)
+            }
         }
     }
 
