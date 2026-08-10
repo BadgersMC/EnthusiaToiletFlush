@@ -209,8 +209,9 @@ class RestartOrchestrator(
         s.nextBatchAt = now
         // Dispatch first batch immediately so single-tick tests see progress.
         dispatchDueBatches(cfg, s, now)
-        // If the target is already empty, dispatch the immediate shutdown now.
-        if (proxy.playersOn(target).isEmpty()) {
+        // A roster can become empty slightly before Velocity completes the
+        // connection request. Do not restart underneath an in-flight transfer.
+        if (proxy.playersOn(target).isEmpty() && s.transferResults.values.all { it.isDone }) {
             sendRestart(target, s, now)
         }
     }
@@ -219,16 +220,20 @@ class RestartOrchestrator(
         dispatchDueBatches(cfg, s, now)
 
         val remaining = proxy.playersOn(target)
-        if (remaining.isEmpty()) {
-            sendRestart(target, s, now)
-            return
-        }
-
         val started = s.drainStartedAt ?: now
         val elapsed = Duration.between(started, now).seconds
         val timedOut = elapsed >= cfg.drain.forceDrainTimeoutSeconds
+        val transfersComplete = s.transferResults.values.all { it.isDone }
+
+        if (remaining.isEmpty()) {
+            if (transfersComplete || timedOut) {
+                sendRestart(target, s, now)
+            }
+            return
+        }
+
         val transferSettled = s.pendingBatches.isEmpty() &&
-            s.transferResults.values.all { it.isDone } &&
+            transfersComplete &&
             s.nextBatchAt?.let { !now.isBefore(it) } == true
 
         // Do not infer transfer completion from elapsed time alone. Velocity's
