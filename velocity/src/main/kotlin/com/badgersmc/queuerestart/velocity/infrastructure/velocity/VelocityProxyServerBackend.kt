@@ -107,7 +107,7 @@ class VelocityProxyServerBackend(
                     "transferPlayer: failed to move {} to '{}': {}",
                     player.username,
                     target.value,
-                    error?.javaClass?.simpleName ?: result?.status?.name ?: "unsuccessful result",
+                    error?.javaClass?.simpleName ?: "unsuccessful connection result",
                 )
             }
             successful
