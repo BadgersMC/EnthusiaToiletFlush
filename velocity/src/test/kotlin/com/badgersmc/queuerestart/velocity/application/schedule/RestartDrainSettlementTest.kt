@@ -60,6 +60,29 @@ class RestartDrainSettlementTest {
     }
 
     @Test
+    fun `empty source waits for in flight transfer result before restart`() {
+        val proxy = SettlementProxy(player, hub)
+        val transfer = CompletableFuture<Boolean>()
+        proxy.transferResult = transfer
+        val audience = SettlementAudience(proxy)
+        val fixture = fixture(proxy, audience)
+        val t0 = Instant.parse("2026-01-01T00:00:00Z")
+
+        fixture.registry.get(survival).arm(cohort(), durationSeconds = 10)
+        fixture.orchestrator.tick(t0)
+        assertThat(fixture.orchestrator.prepareRestartHandoff(survival, fixture.baseline)).isTrue()
+        fixture.orchestrator.tick(t0.plusSeconds(10))
+
+        proxy.playersOnTarget.clear()
+        fixture.orchestrator.tick(t0.plusSeconds(11))
+        assertThat(fixture.messaging.restarts).isZero()
+
+        transfer.complete(true)
+        fixture.orchestrator.tick(t0.plusSeconds(12))
+        assertThat(fixture.messaging.restarts).isEqualTo(1)
+    }
+
+    @Test
     fun `restart publication waits for fallback disconnect settlement`() {
         val proxy = SettlementProxy(player, hub)
         proxy.transferResult = CompletableFuture.completedFuture(false)
