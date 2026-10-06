@@ -3,6 +3,7 @@ package com.badgersmc.queuerestart.velocity.application.arm
 import com.badgersmc.queuerestart.common.protocol.RestartMode
 import com.badgersmc.queuerestart.common.schedule.PendingArm
 import com.badgersmc.queuerestart.velocity.domain.id.ServerId
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
@@ -218,8 +219,14 @@ class PendingArmStore(
             Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING)
         }
         if (parent != null) {
-            FileChannel.open(parent, StandardOpenOption.READ).use { channel ->
-                channel.force(true)
+            try {
+                FileChannel.open(parent, StandardOpenOption.READ).use { channel ->
+                    channel.force(true)
+                }
+            } catch (_: IOException) {
+                // Windows does not permit opening directories as FileChannels.
+                // The state file itself was force()'d above; retain directory
+                // metadata fsync on platforms that support it.
             }
         }
     }

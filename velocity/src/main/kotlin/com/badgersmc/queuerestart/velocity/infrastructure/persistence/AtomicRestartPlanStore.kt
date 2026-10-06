@@ -5,6 +5,7 @@ import com.badgersmc.queuerestart.velocity.domain.id.ServerId
 import com.badgersmc.queuerestart.velocity.domain.plan.PlanState
 import com.badgersmc.queuerestart.velocity.domain.plan.PlanType
 import com.badgersmc.queuerestart.velocity.domain.plan.RestartPlan
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
@@ -81,8 +82,14 @@ class AtomicRestartPlanStore(
             Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING)
         }
         if (parent != null) {
-            FileChannel.open(parent, StandardOpenOption.READ).use { channel ->
-                channel.force(true)
+            try {
+                FileChannel.open(parent, StandardOpenOption.READ).use { channel ->
+                    channel.force(true)
+                }
+            } catch (_: IOException) {
+                // Windows does not permit opening directories as FileChannels.
+                // The plan file itself was force()'d above; retain directory
+                // metadata fsync on platforms that support it.
             }
         }
     }

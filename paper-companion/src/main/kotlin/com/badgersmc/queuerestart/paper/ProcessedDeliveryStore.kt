@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.io.IOException
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.LinkedHashSet
@@ -92,8 +93,14 @@ class ProcessedDeliveryStore(
             Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
         }
         if (parent != null) {
-            FileChannel.open(parent, StandardOpenOption.READ).use { channel ->
-                channel.force(true)
+            try {
+                FileChannel.open(parent, StandardOpenOption.READ).use { channel ->
+                    channel.force(true)
+                }
+            } catch (_: IOException) {
+                // Windows does not permit opening directories as FileChannels.
+                // The file itself was already force()'d above; keep the stronger
+                // directory-metadata fsync on platforms that support it.
             }
         }
     }
